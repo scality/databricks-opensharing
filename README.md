@@ -1,3 +1,48 @@
+> ## Scality fork — Delta Sharing / OpenSharing for Scality RING and ARTESCA
+>
+> This is a Scality fork of [delta-io/delta-sharing](https://github.com/delta-io/delta-sharing).
+> It exists so a Databricks recipient can read Delta **and** Iceberg tables that live on
+> **Scality RING** or **Scality ARTESCA**, with no data movement and the server out of the
+> data path.
+>
+> **The stock server cannot serve data from a non-AWS S3 endpoint.** `S3FileSigner` built
+> its presigning client with an empty `S3ClientCreationParameters`, so `fs.s3a.endpoint`
+> never reached it: metadata reads worked while every presigned URL came back pointing at
+> `s3.amazonaws.com` and the recipient's fetch returned **403**. Configuration alone could
+> not fix it. That is upstream issue
+> [#753](https://github.com/delta-io/delta-sharing/issues/753); the fix is carried here and
+> offered upstream as [PR #965](https://github.com/delta-io/delta-sharing/pull/965).
+>
+> This fork also publishes a **current container image** — the only one on Docker Hub,
+> `deltaio/delta-sharing-server:0.7.8`, is years old and predates the S3A endpoint handling
+> this depends on:
+>
+> ```bash
+> docker run -d -p 8080:8080 -v "$PWD/config:/config" \
+>   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_REGION=us-east-1 \
+>   ghcr.io/scality/databricks-opensharing:latest \
+>   --config /config/delta-sharing-server.yaml
+> ```
+>
+> **Start here → [`docs/scality/`](docs/scality/)** — the Scality configuration that is not
+> obvious (path-style addressing, the signing region, and why the presigner needs `AWS_*` in
+> the process environment *as well as* the keys in `core-site.xml` — each one a silent 403
+> if missed), the deployment profiles, the TLS requirements for a Databricks Serverless
+> recipient, the Iceberg-via-Apache-XTable recipe, and **what is verified versus asserted**.
+>
+> **Support model.** Community-supported open source: issues and pull requests on this
+> repository are the channel. No SLA, no hosted service, not a Scality product. If you need
+> a contractual commitment, talk to your Scality contact rather than filing an issue.
+>
+> **Branches.** `main` is untouched upstream `main`, so *Sync fork* keeps working and pull
+> requests to `delta-io` stay trivial. `scality-1.4` is the release line — upstream tag
+> **v1.4.1** plus the fix and the packaging — and is the default branch. Releases are tagged
+> `v<upstream>-scality.<n>`.
+>
+> Everything below this line is upstream's documentation and applies unchanged.
+
+---
+
 <div align="center">
   <img src="https://user-images.githubusercontent.com/1446829/144671151-b095e1b9-2d24-4d3b-b3c6-a7041e491077.png" alt="Delta Sharing Logo" width="200" />
 </div>
