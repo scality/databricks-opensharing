@@ -54,8 +54,25 @@ class S3FileSigner(
     conf: Configuration,
     preSignedUrlTimeoutSeconds: Long) extends CloudFileSigner {
 
+  // The presigning client must be built from the same S3A configuration the
+  // metadata path uses. Passing an empty S3ClientCreationParameters leaves the
+  // endpoint unset, so the SDK falls back to s3.amazonaws.com and every
+  // presigned URL points at AWS — the metadata path reads the table correctly
+  // while the recipient's fetch 403s against any non-AWS S3 store. Carrying
+  // fs.s3a.endpoint and fs.s3a.path.style.access across is what makes
+  // presigned URLs resolve to the configured endpoint.
+  // Upstream: https://github.com/delta-io/delta-sharing/issues/753
+  //           https://github.com/delta-io/delta-sharing/pull/965
   private val s3Client = ReflectionUtils.newInstance(classOf[DefaultS3ClientFactory], conf)
-    .createS3Client(name, new S3ClientCreationParameters())
+    .createS3Client(name, {
+      val params = new S3ClientCreationParameters()
+      val endpoint = conf.get("fs.s3a.endpoint", "")
+      if (endpoint != null && endpoint.nonEmpty) {
+        params.withEndpoint(endpoint)
+      }
+      params.withPathStyleAccess(conf.getBoolean("fs.s3a.path.style.access", false))
+      params
+    })
 
   override def sign(path: Path): PreSignedUrl = {
     val absPath = path.toUri
