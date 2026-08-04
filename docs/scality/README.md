@@ -95,6 +95,17 @@ authorization:
 Both files carry credentials. Mount them read-only, keep them out of image layers, and
 remove them when you tear a deployment down.
 
+## The published image
+
+`ghcr.io/scality/databricks-opensharing` — tagged `v<upstream>-scality.<n>` plus `latest`,
+built by [`publish-image.yml`](../../.github/workflows/publish-image.yml) from the source in
+this repository. Public: it pulls anonymously, no token needed.
+
+**`linux/amd64` only.** The build runs on GitHub's amd64 runners and publishes a single
+architecture, so an ARM host runs it under emulation (Docker prints a platform-mismatch
+warning). Fine for the x86 servers these deployments target; build locally with
+`docker build` if you need a native ARM image.
+
 ## Deployment profiles
 
 | Profile | Where it runs | Notes |
