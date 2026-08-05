@@ -8,7 +8,12 @@ documentation apply unchanged.
 
 Read this row by row before you rely on it. Four of the five requirements in the
 Databricks software-defined-storage blueprint are covered by an automated gate suite; the
-fifth, and the Databricks-side query, are not.
+fifth is covered by captured evidence rather than a gate, and the Databricks-side query is
+not covered at all.
+
+Everything marked tested below was last exercised against the **published image** — the one
+this documentation is about, `v1.4.1-scality.1`, pulled anonymously from GHCR onto the
+node — rather than against a locally built one.
 
 | Claim | Status |
 | --- | --- |
@@ -18,12 +23,39 @@ fifth, and the Databricks-side query, are not.
 | Presigned URLs are time-bounded, and the signature is load-bearing | **Tested** — the same object fetched with the query string stripped returns 403 |
 | A recipient cannot resolve beyond its own share | **Tested** — unknown share and unknown table both 404 |
 | An Iceberg table served alongside a Delta one, via Apache XTable | **Tested** — ARTESCA 4.3 |
-| Access is auditable | **Asserted** — the server logs each authenticated request; evidence is collected per deployment rather than automated, because log access differs between Kubernetes and host installs |
+| Access is auditable | **Tested** — ARTESCA 4.3, at the reverse proxy in front of the server, which records grants, refusals and out-of-scope requests alike. **The server itself writes no access log** — see "Where the audit trail is" below before relying on this |
 | End-to-end `SELECT` from a Databricks Serverless warehouse | **Not done** |
 
 The signature check is the one not to skip. Every other check can pass while the bucket is
 simply world-readable, in which case the presigned URL proves nothing — so the suite
 fetches the same object with the signature removed and requires a 403.
+
+## Where the audit trail is
+
+Plan for this before a deployment needs to answer "who read what, and who was refused",
+because the server is not the place to look.
+
+**The server writes no access log.** Its stdout carries startup banners, Delta-kernel
+internals and stack traces. A request bearing a wrong bearer token is rejected with a 401
+and leaves no entry — measured on ARTESCA 4.3, where two authorised requests plus one
+rejected request produced 170 log lines, all of them kernel checkpoint output.
+
+**Put the audit trail at the reverse proxy**, which every request crosses: the share
+protocol and the presigned-object fetches both do, so one log covers both. An nginx access
+log in the `upstreaminfo` format records client IP, timestamp, method and path, status,
+byte counts, upstream and a request id — enough to reconstruct the authorisation decisions,
+including the refusals. Verified on ARTESCA 4.3: authorised queries as 200, wrong-token
+requests as 401, unknown share or table as 404, signed object fetches as 200/206, and a
+fetch with the signature stripped as 403.
+
+Two things that waste time when reading it. The container's `/var/log/nginx/access.log` is
+usually a symlink to `/dev/stdout`, so read it from the container's log stream rather than
+by exec-ing a `grep` at that path, which blocks on the pipe. And `upstreaminfo` carries no
+`Host` field, so filtering by hostname matches nothing — filter on the upstream name or the
+request path.
+
+If the object store's own access log is wanted as a second layer, enable it explicitly:
+Scality CloudServer ships its `ServerAccessLogger` disabled.
 
 ## The four things that are each a silent 403
 
