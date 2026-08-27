@@ -138,6 +138,20 @@ architecture, so an ARM host runs it under emulation (Docker prints a platform-m
 warning). Fine for the x86 servers these deployments target; build locally with
 `docker build` if you need a native ARM image.
 
+## One server process serves one S3 endpoint
+
+Worth knowing before designing a deployment that fronts more than one store.
+
+Hadoop supports per-bucket S3A configuration (`fs.s3a.bucket.<name>.endpoint`) and the
+filesystem honours it for metadata reads. **The presigner does not** — it reads the
+global `fs.s3a.endpoint`, so every presigned URL a process emits names one host. A
+config with two tables on two different endpoints therefore lists both correctly, reads
+both correctly, and hands the recipient unreachable URLs for one of them.
+
+To serve two stores, run two processes: two configurations, two ports, two hostnames.
+That is a limitation of this fork rather than of the protocol, and a fix — honouring
+per-bucket configuration in the presigner — would be a welcome contribution.
+
 ## Deployment profiles
 
 | Profile | Where it runs | Notes |
