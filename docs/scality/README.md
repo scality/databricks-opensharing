@@ -24,6 +24,7 @@ node — rather than against a locally built one.
 | A recipient cannot resolve beyond its own share | **Tested** — unknown share and unknown table both 404 |
 | An Iceberg table served alongside a Delta one, via Apache XTable | **Tested** — ARTESCA 4.3 |
 | Access is auditable | **Tested** — ARTESCA 4.3, at the reverse proxy in front of the server, which records grants, refusals and out-of-scope requests alike. **The server itself writes no access log** — see "Where the audit trail is" below before relying on this |
+| The **reference client** reads the share end to end | **Tested** — the Linux Foundation `delta-sharing` client v1.4.2, against Scality RING and ARTESCA: profile → REST → presigned URL → Parquet → DataFrame |
 | End-to-end `SELECT` from a Databricks Serverless warehouse | **Not done** |
 
 The signature check is the one not to skip. Every other check can pass while the bucket is
@@ -214,3 +215,25 @@ tells you which of the four traps above you hit:
 5. `curl` one of those URLs — **200**, and the body starts with `PAR1`.
 6. `curl` the same URL with the query string stripped — **403**. If it returns 200 the
    bucket is public and the signature was proving nothing.
+7. Read the table with the **reference client**, which is the step curl cannot stand in
+   for — it proves the profile format is accepted by the official library, that the
+   client's own presigned-URL handling works, and that the bytes decode into a table:
+
+   ```python
+   import delta_sharing
+   client = delta_sharing.SharingClient("recipient.share")
+   print([s.name for s in client.list_shares()])
+   # list_all_tables() takes NO argument in the 1.x client; passing the share raises
+   # TypeError, which reads like a protocol failure and is not one.
+   tables = client.list_all_tables()
+   df = delta_sharing.load_as_pandas(f"recipient.share#{tables[0].share}.{tables[0].schema}.{tables[0].name}")
+   print(len(df), list(df.columns))
+   ```
+
+⚠ **A pass at step 7 is not a Databricks-side validation.** A Databricks Serverless
+recipient additionally needs its egress to reach both hostnames, Unity Catalog to
+import the provider from the credential file, and `CREATE CATALOG … USING SHARE` to
+resolve — none of which this exercises. Note also that Unity Catalog has **no
+recipient-side `CREATE PROVIDER` SQL**: the credential file goes in through Catalog
+Explorer's *Import provider*, or `POST /api/2.1/unity-catalog/providers` with
+`authentication_type: TOKEN` and the profile JSON in `recipient_profile_str`.
