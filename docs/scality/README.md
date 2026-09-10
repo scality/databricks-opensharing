@@ -120,13 +120,87 @@ authorization:
     <name>fs.s3a.aws.credentials.provider</name>
     <value>org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider</value>
   </property>
-  <!-- Plain HTTP endpoint only: -->
-  <!-- <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property> -->
 </configuration>
 ```
 
 Both files carry credentials. Mount them read-only, keep them out of image layers, and
 remove them when you tear a deployment down.
+
+## How the server reaches the S3 endpoint
+
+Two things about the endpoint must hold before any of the configuration above matters,
+and each fails differently from the silent 403s.
+
+### The hostname must be a registered rest-endpoint
+
+A presigned URL's SigV4 signature covers the `Host` header, so the storage has to accept
+requests addressed to the exact hostname in `fs.s3a.endpoint`. On both RING (S3
+Connector) and ARTESCA that means the hostname is in CloudServer's `restEndpoints`; on
+ARTESCA it is registered as an `isBuiltIn` rest-endpoint through the operator. An
+unregistered host fails on the **first metadata read**, before any URL is minted, and the
+S3 side answers `400 InvalidURI`.
+
+Tell the two apart with one anonymous request:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' https://<fs.s3a.endpoint host>/
+# 403  → registered (AccessDenied: the host resolved to a bucket namespace)
+# 400  → not registered (InvalidURI)
+```
+
+### TLS: three cases
+
+| The S3 endpoint serves | What to configure |
+| --- | --- |
+| HTTPS with a **publicly-trusted** certificate | Nothing beyond `fs.s3a.endpoint`. This is the shape a Databricks recipient needs in the end, since it fetches the presigned URLs from this host. |
+| HTTPS with a **private or corporate CA** | The server's JVM must trust that CA — see below. The recipient must trust it too, which rules the case out for Databricks Serverless but not for a co-located client. |
+| **Plain HTTP** | `fs.s3a.endpoint` as `http://…` **and** `<property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>` in `core-site.xml`. Lab-only: the presigned URLs are then plain HTTP as well. |
+
+A private CA is the case that is neither documented upstream nor a silent 403: the S3A
+client refuses the certificate on the first metadata read, and the failure surfaces
+server-side as a `PKIX path building failed … unable to find valid certification path`
+error. The fix is a truststore the JVM reads, mounted with the rest of `/config`:
+
+```bash
+# 1. Import the CA into a truststore, using the JDK inside the image so the versions match.
+docker run --rm --platform linux/amd64 --entrypoint keytool \
+  -v "$PWD/config:/config" ghcr.io/scality/databricks-opensharing:latest \
+  -importcert -noprompt -alias storage-ca -file /config/ca.pem \
+  -keystore /config/truststore.jks -storepass changeit
+
+# 2. Point the JVM at it. JAVA_TOOL_OPTIONS reaches the server process through the
+#    launcher, so nothing in the image changes.
+docker run -d --platform linux/amd64 -p 8080:8080 \
+  -v "$PWD/config:/config:ro" --env-file aws.env \
+  -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/config/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit" \
+  ghcr.io/scality/databricks-opensharing:latest \
+  --config /config/delta-sharing-server.yaml
+```
+
+One truststore covers both clients in the process — the Hadoop S3A filesystem that reads
+the Delta log and the AWS SDK client that signs the URLs. `javax.net.ssl.trustStoreType`
+does not need setting: JDK 17 sniffs the store type keytool produced. The certificate must
+name the host in `fs.s3a.endpoint`, so if that is an IP address the Subject Alternative
+Name must include the IP.
+
+**How the two endpoint failures look, and why they are easy to confuse.** Both give the
+recipient the same answer to `POST …/query` — `500 {"errorCode":"INTERNAL_ERROR","message":""}`
+with an empty message — while `GET /shares` keeps working. Only the server log and the
+anonymous probe above tell them apart:
+
+| Cause | Recipient sees | Server log says | How long it takes |
+| --- | --- | --- | --- |
+| CA not trusted | `500 INTERNAL_ERROR`, empty message | `SSLHandshakeException: (certificate_unknown) PKIX path building failed … unable to find valid certification path to requested target` | **~20 minutes** — the S3A and Delta-kernel retry loops wrap one handshake failure, so the recipient's own timeout usually fires first and reads as a hang |
+| Host not a registered rest-endpoint | `500 INTERNAL_ERROR`, empty message | `AWSBadRequestException: getFileStatus … Status Code: 400` — the `InvalidURI` body is swallowed | ~3 s; a 400 is not retried |
+
+A reverse-proxy access log in front of the S3 endpoint records **nothing** for the
+untrusted-CA case, because the handshake never completes: an absence, not a refusal.
+
+Measured 2026-09-10 on the published image (`v1.4.1-scality.1`) against Scality
+CloudServer — the S3 service inside both RING and ARTESCA — behind an nginx TLS front with
+a self-signed CA, run locally; the three-state comparison (pass / no truststore /
+unregistered host) was done on the same setup. Not yet repeated against a RING release
+carrying its own certificate.
 
 ## The published image
 
@@ -167,21 +241,72 @@ release** — a customer does not wait for a version to get it.
 ## Reaching it from Databricks
 
 A Databricks Serverless recipient needs to reach both the share endpoint **and** the S3
-host that the presigned URLs point at, and to trust both certificates.
+host that the presigned URLs point at, and to trust both certificates. Everything in the
+sections above can pass from a client next to the storage while none of the following is
+in place, so treat this as the pre-flight the network owner signs off before a
+Databricks-side test is scheduled:
 
-- **Publicly-trusted TLS on both.** A recipient rejects a self-signed chain. Let's Encrypt
-  via cert-manager works; so does any public CA. A lab CA means injecting it recipient-side,
-  which is not a production path.
-- **Egress.** Databricks Serverless leaves from published NCC stable egress IP ranges;
-  allowlist them on the provider side. **NCC private endpoints do not extend to
-  on-premises networks**, so an on-premises provider must expose a publicly reachable,
-  publicly-trusted endpoint rather than plan for PrivateLink.
-- **On ARTESCA**, register the S3 host as an `isBuiltIn` CloudServer rest-endpoint.
-  Otherwise the zenko-operator stands up a competing ingress whose internal CA certificate
-  wins nginx's oldest-ingress-wins selection, and the recipient fails with a PKIX error
-  even though the public certificate exists.
-- If the endpoint is an IP address rather than a hostname, the certificate's Subject
-  Alternative Name must include that IP.
+1. **Two public DNS names**, one for the share server and one for the S3 endpoint the
+   presigned URLs will carry. The S3 name must be the value of `fs.s3a.endpoint`, and it
+   must be a registered rest-endpoint (above).
+2. **Publicly-trusted TLS on both.** A recipient rejects a self-signed or corporate chain.
+   Let's Encrypt via cert-manager works; so does any public CA. A private CA means
+   injecting it recipient-side, which is not a production path. If the endpoint is an IP
+   address rather than a hostname, the certificate's Subject Alternative Name must include
+   that IP.
+3. **Inbound reachability from Databricks Serverless**, which leaves from published NCC
+   stable egress IP ranges; allowlist them on the provider side for both hostnames.
+   **NCC private endpoints do not extend to on-premises networks**, so an on-premises
+   provider exposes a publicly reachable endpoint rather than planning for PrivateLink.
+4. **On ARTESCA**, register the S3 host as an `isBuiltIn` CloudServer rest-endpoint.
+   Otherwise the zenko-operator stands up a competing ingress whose internal CA certificate
+   wins nginx's oldest-ingress-wins selection, and the recipient fails with a PKIX error
+   even though the public certificate exists.
+5. **A reverse proxy with an access log in front of the share server** — the audit trail
+   (above) lives there, not in the server.
+
+## Writing a table to share
+
+The server vends tables that already exist in the bucket; it writes nothing. For a first
+test, [delta-rs](https://delta-io.github.io/delta-rs/) writes a Delta table straight onto
+Scality storage from any laptop, with no Spark:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install deltalake pyarrow
+```
+
+```python
+import pyarrow as pa
+from deltalake import write_deltalake
+
+table = pa.table({"id": [1, 2, 3], "name": ["a", "b", "c"], "amount": [10, 20, 30]})
+write_deltalake(
+    "s3://<bucket>/opensharing-poc/customers",
+    table,
+    mode="overwrite",
+    storage_options={
+        "AWS_ENDPOINT_URL": "https://s3.example.com",
+        "AWS_ACCESS_KEY_ID": "...",
+        "AWS_SECRET_ACCESS_KEY": "...",
+        "AWS_REGION": "us-east-1",
+        "AWS_VIRTUAL_HOSTED_STYLE_REQUEST": "false",   # path style, as for the server
+        # Private CA only:
+        # "AWS_CA_BUNDLE": "/path/to/ca.pem",
+    },
+)
+```
+
+The `location` in `delta-sharing-server.yaml` is the same path with an `s3a://` scheme.
+Two things about CloudServer, the S3 service in RING and ARTESCA, seen while writing
+with it:
+
+- delta-rs commits with a conditional `PUT` (`If-None-Match: *`). CloudServer accepts the
+  write but does not enforce the precondition, so the commit succeeds and protects nothing
+  against a concurrent writer. Fine for a single writer; do not rely on it for more.
+- If you create the bucket with boto3 or a recent AWS CLI and every `PutObject` fails
+  `503 ServiceUnavailable`, the cause is the SDK's default trailing-checksum upload. Set
+  `request_checksum_calculation = "when_required"` (boto3 `Config`, or the same key in
+  `~/.aws/config`). delta-rs is not affected.
 
 ## Serving Iceberg tables
 
@@ -205,6 +330,9 @@ Two things to know before trying it:
 Walk the protocol surface and assert the data path, in this order. A failure at any step
 tells you which of the four traps above you hit:
 
+0. Anonymous `GET /` on the S3 endpoint host — **403** means the host is a registered
+   rest-endpoint, **400** means it is not (above). Do this first: the failure it catches
+   shows up at step 4 as an opaque `500 INTERNAL_ERROR`.
 1. `GET /shares` with no token, and with a wrong token — both must return **401**.
 2. `POST /shares/<s>/schemas/<sc>/tables/<t>/query` unauthenticated — must return **no**
    `url` field at all.
@@ -229,6 +357,13 @@ tells you which of the four traps above you hit:
    df = delta_sharing.load_as_pandas(f"recipient.share#{tables[0].share}.{tables[0].schema}.{tables[0].name}")
    print(len(df), list(df.columns))
    ```
+
+   The client must trust the S3 endpoint's certificate too. With a private CA, point
+   `SSL_CERT_FILE` at a bundle holding **both** the CA and the system roots (concatenate
+   `certifi.where()` with the CA; a bare CA file breaks `pip` in the same environment).
+   An untrusted CA on the client side surfaces as `FileNotFoundError: https://<s3 host>/…`
+   on the presigned URL, not as a TLS error. The `delta-kernel-rust-sharing-wrapper`
+   dependency has no linux/arm64 wheel, so run the client on x86-64.
 
 ⚠ **A pass at step 7 is not a Databricks-side validation.** A Databricks Serverless
 recipient additionally needs its egress to reach both hostnames, Unity Catalog to
