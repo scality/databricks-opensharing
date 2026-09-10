@@ -18,8 +18,12 @@
 > this depends on:
 >
 > ```bash
-> docker run -d -p 8080:8080 -v "$PWD/config:/config" \
->   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_REGION=us-east-1 \
+> # aws.env holds AWS_ACCESS_KEY_ID=…, AWS_SECRET_ACCESS_KEY=…, AWS_REGION=us-east-1 —
+> # the same keys as core-site.xml. The presigner reads them from the environment, so
+> # passing bare `-e AWS_ACCESS_KEY_ID` forwards whatever the shell has, and an unset
+> # shell variable becomes a silent 403 at the recipient.
+> docker run -d --platform linux/amd64 -p 8080:8080 \
+>   -v "$PWD/config:/config:ro" --env-file aws.env \
 >   ghcr.io/scality/databricks-opensharing:latest \
 >   --config /config/delta-sharing-server.yaml
 > ```
