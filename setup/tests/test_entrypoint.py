@@ -9,9 +9,11 @@ enforcement line deleted from a verb handler, so they are kept as what they are
 and the wire tests are what actually prove the guard fires.
 """
 import http.client
+import io
 import json
 import os
 import shutil
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -24,6 +26,7 @@ from auth import Auth
 from entrypoint import STATE_COPY, boot, make_handler, session_from_cookie
 from state import (DEGRADED, FAILED_START, NEVER_VERIFIED, STOPPED, UNCONFIGURED,
                    VERIFIED)
+from supervise import Supervisor
 from tests.test_app import CFG, offline_opener, passing
 
 TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -51,6 +54,13 @@ class FakeSupervisor:
 
     def stop(self):
         self.ok = False
+
+    # The shipped redactor, not a stand-in: the bundle route hands this method to
+    # bundle.build, and a fake that returned its input unchanged would let a
+    # route test pass over an archive carrying credentials.
+    _last_good = None
+    _redact = staticmethod(Supervisor._redact)
+    _redact_with_history = Supervisor._redact_with_history
 
 
 class TestStateCopy(unittest.TestCase):
@@ -238,7 +248,8 @@ class TestSessionEnforcement(HandlerCase):
                              ("GET", "/api/browse"), ("PUT", "/api/config"),
                              ("PUT", "/api/ca"), ("DELETE", "/api/ca"),
                              ("POST", "/api/apply"), ("POST", "/api/verify"),
-                             ("POST", "/api/token/rotate")):
+                             ("POST", "/api/token/rotate"),
+                             ("GET", "/api/support-bundle")):
             status, _, _ = self.request(method, path, body="{}",
                                         headers={"Content-Type": "application/json"})
             self.assertEqual(status, 401, "%s %s" % (method, path))
@@ -355,6 +366,34 @@ class TestRoutes(HandlerCase):
         status, _, _ = self.request("POST", "/api/apply", headers=headers)
         self.assertEqual(status, 200)
 
+    def test_a_support_bundle_before_any_configuration_is_409(self):
+        status, _, body = self.request("GET", "/api/support-bundle",
+                                       headers=self.cookie())
+        self.assertEqual(status, 409)
+        self.assertIn("error", json.loads(body))
+
+    def test_a_support_bundle_is_a_named_gzip_attachment(self):
+        headers = self.cookie()
+        self.configure(headers)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", "/api/support-bundle", headers=headers)
+            response = conn.getresponse()
+            payload = response.read()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "application/gzip")
+            disposition = response.getheader("Content-Disposition")
+        finally:
+            conn.close()
+        self.assertTrue(disposition.startswith("attachment; filename="), disposition)
+        self.assertIn("opensharing-support-", disposition)
+        self.assertTrue(disposition.rstrip('"').endswith(".tar.gz"), disposition)
+        # Really an archive, not a JSON error with the wrong header on it.
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as tar:
+            names = tar.getnames()
+        self.assertIn("README.txt", names)
+        self.assertIn("status.json", names)
+
     def test_an_unknown_path_is_404(self):
         headers = self.cookie()
         for method, path in (("GET", "/api/nothing"), ("PUT", "/api/nothing"),
@@ -406,6 +445,34 @@ class TestStaticFiles(HandlerCase):
         self.write("app.js", "ok\n")
         status, _, _ = self.request("GET", "/static/app.js")
         self.assertEqual(status, 200)
+
+
+class TestMetricsRoute(HandlerCase):
+    """The scrape endpoint. A scraper holds no cookie, so this is the one route
+    besides the login and the static files that answers without a session."""
+
+    def test_metrics_needs_no_session(self):
+        status, msg, body = self.request("GET", "/metrics")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(msg.get("Content-Type"),
+                         "text/plain; version=0.0.4; charset=utf-8")
+        self.assertIn(b"opensharing_setup_info", body)
+
+    def test_metrics_reports_the_state_the_status_route_reports(self):
+        headers = self.cookie()
+        _, _, raw = self.request("GET", "/api/status", headers=headers)
+        state = json.loads(raw)["state"]
+        _, _, body = self.request("GET", "/metrics")
+        self.assertIn(b'opensharing_state{state="%s"} 1' % state.encode(), body)
+
+    def test_a_configured_deployment_leaks_no_secret_through_the_wire(self):
+        # The whole path, not just the renderer: a future handler that decided to
+        # append something of its own would be caught here and nowhere else.
+        self.configure(self.cookie())
+        _, _, body = self.request("GET", "/metrics")
+        for forbidden in (CFG["secret_key"], CFG["access_key"],
+                          CFG["tables"][0]["table"], CFG["s3_endpoint"]):
+            self.assertNotIn(forbidden.encode(), body)
 
 
 if __name__ == "__main__":

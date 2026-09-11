@@ -137,7 +137,14 @@
     <button id="verify" type="button">Verify</button>
     <button id="rotate" type="button">Rotate token</button>
     <button id="profile" type="button" disabled>Download .share</button>
+    <button id="bundle" type="button" disabled>Export support bundle</button>
   </p>
+  <p class="hint">The support bundle is one <code>.tar.gz</code> holding the two rendered
+     configuration files, the whole server log, the saved setup, the version report and
+     the last check results. The S3 secret key, the S3 access key and the bearer token
+     are replaced with <code>&#171;redacted&#187;</code> everywhere in it, including in the
+     log. It is built here and downloaded by this browser — nothing is sent anywhere.
+     Attach it to a support case yourself.</p>
 
   <div id="problems"></div>
   <div id="warnings"></div>

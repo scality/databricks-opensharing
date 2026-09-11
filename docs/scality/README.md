@@ -59,6 +59,13 @@ request path.
 If the object store's own access log is wanted as a second layer, enable it explicitly:
 Scality CloudServer ships its `ServerAccessLogger` disabled.
 
+For a support case rather than an audit, the server-side record is the setup page's
+**support bundle** — the rendered configuration, the whole server log and the last check
+results in one archive, with the S3 keys and the bearer token masked before it is written
+(see "What to send when something fails" in [`setup/README.md`](../../setup/README.md)).
+It describes what this deployment is and what it did; it is not an access log and does not
+answer "who read what".
+
 ## The four things that are each a silent 403
 
 Every one of these fails the *data* path while the *control* path keeps working, which is
@@ -235,6 +242,12 @@ cover — it is the same three TLS modes, the same rest-endpoint precheck, the s
 signature check — packaged so an operator fills in a form instead of hand-editing XML
 and YAML. Details, the run command, the setup token, and what its checks do and do not
 prove: [`setup/README.md`](../../setup/README.md).
+
+It also exposes `GET /metrics` on the page port in Prometheus text format — state, table
+count, endpoint mode and the last verdict per check, carrying no secret, token or table
+name — so the deployment's health reaches a monitoring system even though the server
+writes no access log; see
+[the Metrics section](../../setup/README.md#metrics).
 
 ## One server process serves one S3 endpoint
 

@@ -174,6 +174,25 @@ wait_state verified 120
 echo "verified after apply"
 api GET /api/profile | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["bearerToken"] and d["endpoint"].endswith("/delta-sharing"), d; print("profile:", d["endpoint"])'
 
+log "metrics and support bundle carry the state and none of the secrets"
+m="$(curl -sS "http://127.0.0.1:${HOST_PORT}/metrics")"     # no session on purpose
+echo "$m" | grep -q '^opensharing_state{state="verified"} 1$' || { echo "$m" | head -30; fail "metrics do not report verified"; }
+for s in "$SECRET_KEY" "$ACCESS_KEY" customers opensharing-poc; do
+  echo "$m" | grep -qF "$s" && fail "metrics leak: $s"
+done
+echo "metrics: verified, no secret, no table name"
+api GET /api/support-bundle > "$WORK/bundle.tgz"
+mkdir -p "$WORK/bundle" && tar -xzf "$WORK/bundle.tgz" -C "$WORK/bundle"
+for f in README.txt version.json status.json checks.txt core-site.xml delta-sharing-server.yaml server.log ca.pem; do
+  [ -f "$WORK/bundle/$f" ] || fail "bundle lacks $f"
+done
+tok="$(docker exec "dsci-setup-$$" python3 -c 'import re,sys; t=open("/config/delta-sharing-server.yaml").read(); print(re.search(r"bearerToken: \"([^\"]+)\"", t).group(1))')"
+for s in "$SECRET_KEY" "$tok"; do
+  grep -rqF "$s" "$WORK/bundle" && fail "bundle leaks a secret"
+done
+grep -q 'redacted' "$WORK/bundle/core-site.xml" || fail "bundle core-site.xml is not masked"
+echo "support bundle: $(ls "$WORK/bundle" | wc -l | tr -d ' ') files, secrets masked"
+
 log "restart: the server resumes from /config and the state is never_verified"
 docker restart "dsci-setup-$$" >/dev/null; wait_page; login
 wait_state never_verified 60

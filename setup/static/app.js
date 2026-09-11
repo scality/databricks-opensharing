@@ -185,6 +185,10 @@ async function refresh() {
   $("state").textContent = s.copy || s.state;
   // Handover is gated on the server's verdict, not on anything this script decides.
   $("profile").disabled = s.state !== "verified";
+  // The bundle is a diagnostic, so it is gated on there being something to
+  // diagnose and on nothing else. Gating it on "verified" the way the handover
+  // is would withhold it in exactly the states it exists for.
+  $("bundle").disabled = !s.config;
   $("token_expires").textContent = s.token_expires || "not set";
   if (s.version) {
     $("version").textContent = `Setup image ${s.version.setup}, sharing server ${s.version.server || "unknown"}.`;
@@ -341,6 +345,25 @@ $("profile").onclick = async () => {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "scality.share";
+  a.click();
+};
+
+// The bundle's name carries the moment it was taken, which only the server
+// knows, so it is read off the response. The fallback is used when a response
+// arrives without the header rather than saving the archive under a name the
+// browser invents, which is typically the route's last path segment.
+function bundleFilename(header) {
+  const found = /filename="?([^";]+)"?/.exec(header || "");
+  return found ? found[1] : "opensharing-support.tar.gz";
+}
+
+$("bundle").onclick = async () => {
+  const r = await fetch("/api/support-bundle");
+  if (r.status === 401) return refresh();
+  if (!r.ok) { alert("Nothing is configured yet — press Check first."); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = bundleFilename(r.headers.get("Content-Disposition"));
   a.click();
 };
 

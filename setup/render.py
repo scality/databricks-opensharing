@@ -156,6 +156,15 @@ def new_token():
     return secrets.token_hex(24)
 
 
+def now_utc_iso():
+    """The current instant, in the same ISO-8601 UTC shape as `token_expiry`.
+
+    One format for every timestamp this tool emits, so a reader never has to work
+    out which of two shapes a field is in.
+    """
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def token_expiry(days):
     """An ISO-8601 UTC instant `days` from now.
 

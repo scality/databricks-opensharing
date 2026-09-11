@@ -77,7 +77,7 @@ section also carries the bearer token's expiry, which is advisory only — nothi
 enforces it, and access ends when the token is rotated, not when this date
 passes.
 
-Four buttons act on all of the above together:
+Five buttons act on all of the above together:
 
 - **Check** validates the form and runs a set of pre-checks that need no running
   server — the same reachability, rest-endpoint-registration and bucket
@@ -96,6 +96,51 @@ Four buttons act on all of the above together:
 - **Download .share** is enabled only once every gate in the suite has passed.
   Pressing it before that would hand a recipient a profile against a deployment
   nothing has confirmed serves data correctly.
+- **Export support bundle** downloads one `.tar.gz` describing this deployment,
+  for attaching to a support case. It is enabled as soon as a configuration
+  exists — verified or not, since the states it is most wanted in are the ones
+  that failed. See "What to send when something fails", below.
+
+## What to send when something fails
+
+Three things, in this order. Together they say what was configured, what the
+server did with it, and which check disagreed — which is enough to answer most
+failures without a screen-sharing session.
+
+1. **The support bundle.** Press *Export support bundle* on the page. It is a
+   `.tar.gz` holding `core-site.xml` and `delta-sharing-server.yaml` as rendered,
+   the **whole** of `server.log` rather than the tail the page shows, `setup.json`,
+   the version report, the status the page was displaying and the last gate
+   suite's results one line per check. `ca.pem` is included when a private CA is
+   configured — a certificate is public material.
+
+   **What is masked.** The S3 secret key, the S3 access key and the recipient's
+   bearer token are replaced with `«redacted»` everywhere in the archive,
+   including inside the server log, and including the credentials of the
+   *previous* run — the log is appended across restarts, so a failure that
+   happened before the last restart is still in it. The two rendered files keep
+   everything else: the endpoint, the region, path-style access, the credentials
+   provider, and the shares, schemas, tables and locations. The bundle is built
+   inside the container and downloaded by the browser that asked for it; nothing
+   is uploaded anywhere, and it reaches Scality only if you attach it yourself.
+
+2. **The output of the step-0 probe** — an anonymous `GET /` against the S3
+   endpoint host:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' https://<s3-endpoint>/
+   # 403  → the host is a registered rest-endpoint
+   # 400  → it is not (InvalidURI), and nothing else can work until it is
+   ```
+
+   The page runs this itself as the rest-endpoint pre-check, but running it from
+   your own shell separates "the container cannot reach the endpoint" from "the
+   endpoint is not registered", which the page's single line cannot.
+
+3. **The failing check line**, copied from the page as it reads — for example
+   `FAIL signature_required — the stripped URL returned 200`. It is also in the
+   bundle's `checks.txt`; quoting it in the case body is what says which failure
+   the bundle is about.
 
 ## Where `/config` lives and what is in it
 
@@ -125,6 +170,55 @@ server, and invalidates every `.share` profile handed out before — the old
 token stops working the moment the new server is up. It also invalidates the
 current verdict, the same as any change that touches what was configured, so
 the state reads never-verified until Verify (or another Apply) runs again.
+
+## Metrics
+
+`GET /metrics` on the page's port returns the Prometheus text exposition
+(version 0.0.4). It answers **without a session** — a scraper holds no cookie —
+and it carries nothing a scrape should not: no S3 secret, no access key, no
+bearer token, no share, schema or table name, and not the S3 endpoint hostname.
+Those name the customer's storage and its data, and a label value lives in the
+monitoring system for as long as the series does. Everything below is a count, a
+state or a check outcome.
+
+| Series | Meaning |
+| --- | --- |
+| `opensharing_setup_info{image,server}` | always 1; the setup image tag and the sharing server version, to join against |
+| `opensharing_state{state}` | one series per state (`unconfigured`, `never_verified`, `verified`, `degraded`, `stopped`, `failed_start`), exactly one at 1 |
+| `opensharing_server_running` | 1 when the sharing server is up and serving |
+| `opensharing_tables_shared` | how many tables are shared; the names are on the page, not here |
+| `opensharing_endpoint_mode{mode}` | `trusted`, `private_ca` or `http`; all 0 before anything is configured |
+| `opensharing_check{id,table}` | last verdict per check: 1 pass, 0 fail, −1 could not run. A check about one shared table carries `table="<position>"` — its place in the configuration, because the gate suite names those checks after the table itself |
+| `opensharing_last_verdict_timestamp_seconds` | when those checks ran; absent until a verdict exists |
+| `opensharing_token_expiry_timestamp_seconds` | the date stamped on the recipient token; absent when no token is minted |
+
+`opensharing_check` is the one worth alerting on: a `0` is a gate that failed,
+and a `−1` is a check that could not run, which is an absent measurement rather
+than a finding — alert on the two differently or a storage blip pages as a
+broken share.
+
+⚠ **The `table` label is a position, and the page is where positions become
+names.** The gate suite names a per-table check `query_url_host_<share>.<schema>.<table>`,
+which is the right name on the page and the wrong one in a monitoring system, so
+the metric carries `opensharing_check{id="query_url_host",table="2"}` instead —
+the second table in the configuration. A check from a verdict taken before the
+table list changed keeps its full id: it belongs to no current position, and a
+table no longer configured is a table no longer shared.
+
+**Scraping it.** The endpoint sits on the page port, so `-p 127.0.0.1:8088:8088`
+keeps it on the host's loopback along with the page — leave it there and scrape
+from a Prometheus on the same host. If a Prometheus elsewhere must reach it,
+publish that port on the monitoring network and remember the page comes with it:
+the token is the only thing in front of the page, so put both behind the same
+network control you would have used for the page alone.
+
+```yaml
+scrape_configs:
+  - job_name: opensharing
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8088"]
+```
 
 ## What the checks prove, and what they do not
 

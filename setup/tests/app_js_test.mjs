@@ -489,6 +489,65 @@ test("uploading a CA reports a refusal and a success", async () => {
   assert.equal(registry.ca_sha256.textContent, "deadbeef");
 });
 
+// The bundle route answers with an archive and a Content-Disposition, neither of
+// which jsonResponse models. `headers` is deliberately a bare get(): that is the
+// whole of the Fetch Headers surface app.js is allowed to depend on.
+function bundleResponse(status, body, disposition) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: (name) =>
+      (name === "Content-Disposition" ? (disposition === undefined ? null : disposition) : null) },
+    blob: async () => ({ bytes: body }),
+    json: async () => ({ error: body }),
+    text: async () => String(body),
+  };
+}
+
+test("the support bundle is offered once a configuration exists, and saves under "
+  + "the server's filename or a fallback", async () => {
+  let configured = false;
+  let disposition = 'attachment; filename="opensharing-support-20260911T101500Z.tar.gz"';
+  const { registry, context } = newPage(async (url) => {
+    if (url === "/api/status") {
+      return jsonResponse(200, statusBody(configured ? {} : { config: null }));
+    }
+    if (url === "/api/support-bundle") return bundleResponse(200, "gzip-bytes", disposition);
+    throw new Error("unexpected fetch " + url);
+  });
+  await settle();
+  assert.equal(registry.bundle.disabled, true,
+    "there is nothing to diagnose before a configuration exists");
+
+  // Not verified — degraded is exactly the state the bundle exists for, and the
+  // handover download stays disabled in it.
+  configured = true;
+  await context.refresh();
+  await settle();
+  assert.equal(registry.bundle.disabled, false,
+    "a configured deployment can always export a bundle, verified or not");
+
+  const anchors = [];
+  const createElement = context.document.createElement;
+  context.document.createElement = (tag) => {
+    const el = createElement(tag);
+    if (tag === "a") anchors.push(el);
+    return el;
+  };
+  await registry.bundle.onclick();
+  await settle();
+  assert.equal(anchors.length, 1);
+  assert.equal(anchors[0].download, "opensharing-support-20260911T101500Z.tar.gz",
+    "the name carries the moment the bundle was taken, which only the server knows");
+
+  disposition = undefined;
+  await registry.bundle.onclick();
+  await settle();
+  assert.equal(anchors.length, 2);
+  assert.equal(anchors[1].download, "opensharing-support.tar.gz",
+    "a response without the header still saves under a name of ours");
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

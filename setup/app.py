@@ -11,9 +11,11 @@ concurrent reader can see "not verified yet" but never a pass that was taken
 against something else. And the S3 secret key never leaves this process — not in
 a status payload, not in a saved setup file.
 """
+import datetime
 import threading
 import urllib.request
 
+import bundle
 import checks
 import persist
 import render
@@ -79,6 +81,9 @@ class App:
             "config": self._public_config(),
             "version": version.report(),
             "verdict": self._verdict,
+            # Dates the verdict rather than the configuration: a pass from an
+            # hour ago and one from last month read alike without it.
+            "verdict_at": (self._verdict or {}).get("verdict_at", ""),
             "config_hash": self._applied_hash,
             "token_expires": self._expires,
             "warnings": list(self._warnings),
@@ -143,6 +148,29 @@ class App:
         if wanted:
             tables = [t for t in tables if t["prefix"].startswith(wanted)]
         return (200, {"tables": tables, "truncated": truncated})
+
+    def get_support_bundle(self):
+        """(status, filename, bytes) for the redacted archive a support case gets.
+
+        Needs a configuration for the same reason browse does: there is nothing
+        to describe before one exists, and an archive of an empty directory would
+        be mistaken for evidence that nothing is wrong.
+
+        The redactor is the Supervisor's, not `bundle`'s own: it knows the
+        previous run's secrets as well as this one's, and `server.log` is
+        appended across restarts, so the run most likely to still be echoed in it
+        is the one that already ended.
+        """
+        if not self._cfg:
+            return (409, "", '{"error":"nothing is configured yet — press Check '
+                             'and Apply before exporting a bundle"}')
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y%m%dT%H%M%SZ")
+        payload = bundle.build(
+            self.config_dir, self.get_status(),
+            (self._cfg.get("secret_key"), self._cfg.get("access_key"), self._token),
+            self.sup._redact_with_history)
+        return (200, "opensharing-support-%s.tar.gz" % stamp, payload)
 
     # ── writes ───────────────────────────────────────────────────────────────
     def put_config(self, cfg):
@@ -305,7 +333,8 @@ class App:
         ssl_ctx = tls.ssl_context(self._cfg, self.config_dir)
         found = self._run_post_checks(self._cfg, self._token,
                                       self.local_server_url, ssl_ctx)
-        self._verdict = {"hash": self._applied_hash, "checks": found}
+        self._verdict = {"hash": self._applied_hash, "checks": found,
+                         "verdict_at": render.now_utc_iso()}
 
     def _run_post_checks(self, cfg, token, local_server_url, ssl_ctx):
         """The gate suite. Imported here rather than at module scope so this

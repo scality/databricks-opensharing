@@ -9,6 +9,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+import metrics
 import persist
 from app import App
 from auth import Auth
@@ -27,8 +28,12 @@ LAUNCHER = ["/opt/delta-sharing-server/bin/delta-sharing-server",
 
 COOKIE_NAME = "opensharing_session"
 PROTECTED_PREFIX = "/api/"
-# The one API path reachable without a session — it is how a session is obtained.
-PUBLIC_API = ("/api/login",)
+# The paths reachable without a session: the login exchange, which is how a
+# session is obtained, and the metrics exposition, which a scraper reaches with no
+# way to hold a cookie. Everything metrics.py renders is a count, a state or a
+# check outcome — no secret, no token, no table name — so the port that publishes
+# the page is the only access control it needs, exactly as for the page itself.
+PUBLIC_API = ("/api/login", "/metrics")
 
 CONTENT_TYPES = {".js": "text/javascript", ".css": "text/css",
                  ".html": "text/html", ".svg": "image/svg+xml"}
@@ -143,6 +148,18 @@ def make_handler(app, auth, static_dir=STATIC_DIR):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _download(self, payload, filename, ctype):
+            """A response the browser saves rather than renders. The filename is
+            server-side because it carries the timestamp the bundle was taken at,
+            which the page has no reason to invent for itself."""
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s"' % filename)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
         def _send_pair(self, pair):
             code, body = pair
             if not isinstance(body, (str, bytes)):
@@ -194,8 +211,16 @@ def make_handler(app, auth, static_dir=STATIC_DIR):
                 status = app.get_status()
                 status["copy"] = STATE_COPY[status["state"]]
                 return self._send(200, json.dumps(status))
+            if path == "/metrics":
+                return self._send(200, metrics.render(app.get_status()),
+                                  "text/plain; version=0.0.4; charset=utf-8")
             if path == "/api/profile":
                 return self._send_pair(app.get_profile())
+            if path == "/api/support-bundle":
+                code, filename, payload = app.get_support_bundle()
+                if code != 200:
+                    return self._send(code, payload)
+                return self._download(payload, filename, "application/gzip")
             if path == "/api/browse":
                 prefix = (parse_qs(parts.query).get("prefix") or [""])[0]
                 return self._send_pair(app.get_browse(prefix))
