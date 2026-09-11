@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>delta-share</Name>
+  <Prefix>archive/2026/orders/</Prefix>
+  <Delimiter>/</Delimiter>
+  <MaxKeys>1000</MaxKeys>
+  <KeyCount>2</KeyCount>
+  <IsTruncated>false</IsTruncated>
+  <Contents><Key>archive/2026/orders/part-00000.snappy.parquet</Key><Size>12</Size></Contents>
+  <CommonPrefixes><Prefix>archive/2026/orders/_delta_log/</Prefix></CommonPrefixes>
+</ListBucketResult>

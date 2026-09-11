@@ -1,0 +1,29 @@
+version: 1
+
+shares:
+  - name: "scality"
+    schemas:
+      - name: "poc"
+        tables:
+          - name: "customers"
+            location: "s3a://delta-share/opensharing-poc/customers"
+            id: "68f539b2-81d8-5011-815f-184f34ab75b2"
+            historyShared: true
+          - name: "orders"
+            location: "s3a://delta-share/opensharing-poc/orders"
+            id: "450f83e3-e90d-5fe5-b6d1-22c4e86e5c5c"
+            historyShared: true
+      - name: "finance"
+        tables:
+          - name: "ledger"
+            location: "s3a://delta-share/warehouse/finance/ledger"
+            id: "35d0cfe2-457f-566c-9e5b-df6fa7400d68"
+            historyShared: true
+
+host: "0.0.0.0"
+port: 8080
+endpoint: "/delta-sharing"
+preSignedUrlTimeoutSeconds: 3600
+
+authorization:
+  bearerToken: "0123456789abcdef0123456789abcdef0123456789abcdef"

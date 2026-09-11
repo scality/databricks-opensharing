@@ -1,0 +1,3 @@
+setup/tests/
+setup/ci/
+**/__pycache__/

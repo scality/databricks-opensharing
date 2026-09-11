@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+  <property>
+    <name>fs.s3a.endpoint</name>
+    <value>https://s3.example.com</value>
+  </property>
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.access.key</name>
+    <value>AKIAEXAMPLEACCESSKEY</value>
+  </property>
+  <property>
+    <name>fs.s3a.secret.key</name>
+    <value>example-secret-key-value</value>
+  </property>
+  <property>
+    <name>fs.s3a.connection.ssl.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint.region</name>
+    <value>us-east-1</value>
+  </property>
+  <property>
+    <name>fs.s3a.paging.maximum</name>
+    <value>1000</value>
+  </property>
+  <property>
+    <name>fs.s3a.aws.credentials.provider</name>
+    <value>org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider</value>
+  </property>
+</configuration>
