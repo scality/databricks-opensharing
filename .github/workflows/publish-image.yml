@@ -52,7 +52,13 @@ jobs:
       # the two images published under one version are provably the same server build.
       - name: Build the setup image
         run: |
+          # The version baked in is the tag on a tag build, the short SHA otherwise.
+          case "$GITHUB_REF" in
+            refs/tags/*) SETUP_VERSION="${GITHUB_REF#refs/tags/}" ;;
+            *)           SETUP_VERSION="ci-${GITHUB_SHA::12}" ;;
+          esac
           docker build --build-arg SERVER_IMAGE="$IMAGE:ci-${GITHUB_SHA}" \
+            --build-arg SETUP_VERSION="$SETUP_VERSION" \
             -f setup/Dockerfile -t "$SETUP_IMAGE:ci-${GITHUB_SHA}" .
 
       - name: Smoke-test the setup image

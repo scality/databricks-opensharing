@@ -20,6 +20,7 @@ import render
 import s3
 import state as st
 import tls
+import version
 
 TOKEN_TTL_DAYS = 90
 
@@ -76,6 +77,7 @@ class App:
                 verdict=self._verdict,
                 applied_hash=self._applied_hash),
             "config": self._public_config(),
+            "version": version.report(),
             "verdict": self._verdict,
             "config_hash": self._applied_hash,
             "token_expires": self._expires,

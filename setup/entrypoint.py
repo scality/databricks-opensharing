@@ -253,6 +253,8 @@ def main():
         print("Found a configuration in %s but the sharing server did not start: %s"
               % (CONFIG_DIR, found["detail"]), flush=True)
 
+    import version
+    print("Setup image %s, sharing server %s" % (version.setup_version(), version.server_version() or "unknown"), flush=True)
     print("Setup token: %s" % auth.bootstrap, flush=True)
     print("Listening on http://%s:%d" % (BIND, PORT), flush=True)
     # Threaded: apply, rotate and verify run inline for several seconds, and a

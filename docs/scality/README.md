@@ -12,9 +12,9 @@ fifth is covered by captured evidence rather than a gate, and the Databricks-sid
 not covered at all.
 
 Everything marked tested below was last exercised against the **published image** — the one
-this documentation is about, `v1.4.1-scality.1`, pulled anonymously from GHCR onto the
-node — rather than against a locally built one. The setup image described below is not
-yet published as of this writing; the intended tag is `v1.4.1-scality.2` onward.
+this documentation is about, pulled anonymously from GHCR — rather than against a locally
+built one. The server rows were measured on `v1.4.1-scality.1`; the setup image exists
+from `v1.4.1-scality.2` and its rows are in the setup section below.
 
 | Claim | Status |
 | --- | --- |
@@ -223,8 +223,8 @@ warning). Fine for the x86 servers these deployments target; build locally with
 `linux/amd64`-only build, built `FROM` it by
 [`setup/Dockerfile`](../../setup/Dockerfile) so both images published under one version
 carry the same server build. Published by the same tag-driven workflow as the server
-image. Not yet published as of this writing; the intended tag is `v1.4.1-scality.2`
-onward.
+image, from `v1.4.1-scality.2`; the image reports its own tag and the server version at
+start and on the page.
 
 It puts a browser page on :8080's neighbour, :8088, in front of the two files above. The
 page automates the endpoint/credentials/tables/recipient decisions this document walks

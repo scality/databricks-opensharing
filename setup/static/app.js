@@ -186,6 +186,9 @@ async function refresh() {
   // Handover is gated on the server's verdict, not on anything this script decides.
   $("profile").disabled = s.state !== "verified";
   $("token_expires").textContent = s.token_expires || "not set";
+  if (s.version) {
+    $("version").textContent = `Setup image ${s.version.setup}, sharing server ${s.version.server || "unknown"}.`;
+  }
   if (s.ca) {
     $("ca_sha256").textContent = s.ca.present ? (s.ca.sha256 || "present") : "none";
   }

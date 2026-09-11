@@ -41,12 +41,13 @@ publishes four refs from that one tag: `ghcr.io/scality/databricks-opensharing:<
 `:latest`, `ghcr.io/scality/databricks-opensharing-setup:<tag>` and `-setup:latest`. Auth
 is `GITHUB_TOKEN`; no long-lived credential is stored.
 
-⚠ **A new GHCR package defaults to private** — an org's Packages settings do not make a
-package public merely because the repository publishing it is public. The first tag of a
-package (the server image already exists; the setup image does not yet) needs a one-time
-manual step in the GHCR package's own settings, *Change package visibility → Public*,
-before `docker pull` works anonymously. Nothing in the workflow does this, and there is
-no API call in this repository that would.
+**Check a new package pulls anonymously after its first tag.** Measured 2026-09-11 on the
+first push of `databricks-opensharing-setup`: the package was public immediately, so no
+manual visibility step was needed. That is the org's package setting rather than anything
+this workflow does, so verify rather than assume — an anonymous token from
+`https://ghcr.io/token?scope=repository:scality/<package>:pull` followed by a manifest
+GET must answer 200; if it does not, the fix is *Change package visibility → Public* in
+the package's own settings.
 
 ## Push policy
 

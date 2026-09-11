@@ -12,6 +12,10 @@
 ARG SERVER_IMAGE=ghcr.io/scality/databricks-opensharing:latest
 FROM ${SERVER_IMAGE}
 
+# The tag this image was built from, reported at start and on /api/status.
+ARG SETUP_VERSION=dev
+ENV SETUP_VERSION=${SETUP_VERSION}
+
 # eclipse-temurin:17-jre ships no python3. ca-certificates gives the page the system
 # roots it verifies public endpoints against; keytool comes with the JRE.
 USER root
