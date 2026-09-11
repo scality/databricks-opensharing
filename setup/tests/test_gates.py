@@ -8,6 +8,7 @@ deployment verified. So these tests assert the state, not only the check.
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,7 +44,9 @@ class TestASuiteThatFinishes(unittest.TestCase):
     def test_the_gate_results_are_carried_through_unchanged(self):
         direct = verify.run(CFG, TOKEN, LOCAL_SERVER_URL, None,
                             opener=FakeDeployment(CFG), client=FakeS3Client())
-        self.assertEqual(run()[:-1], direct)
+        # The readiness check comes first and the suite marker last; between
+        # them the gates are exactly what verify.run produced.
+        self.assertEqual(run()[1:-1], direct)
 
     def test_a_clean_deployment_is_verified(self):
         self.assertEqual(resolve(run()), st.VERIFIED)
@@ -94,12 +97,50 @@ class TestASuiteThatRaises(unittest.TestCase):
             def __call__(self, req, timeout=None, context=None):
                 raise OSError("storage is unreachable")
 
-        results = run(opener=DeadOnArrival(CFG))
-        self.assertEqual(results[-1], {"id": "suite_completed", "result": FAIL,
-                                       "detail": "OSError: storage is unreachable"})
-        self.assertEqual([c["id"] for c in results],
-                         ["rest_endpoint_registered", "suite_completed"])
+        # A server that never listens: the readiness wait gives up (a fake
+        # clock, so no real 90 seconds pass) and the suite is marked as not run.
+        with mock.patch.object(gates, "wait_until_listening",
+                               lambda url, opener=None: gates.check(
+                                   gates.READY_ID, FAIL, "never answered")):
+            results = run(opener=DeadOnArrival(CFG))
+        self.assertEqual([c["id"] for c in results], ["server_listening", "suite_completed"])
+        self.assertEqual(results[-1]["result"], FAIL)
         self.assertEqual(resolve(results), st.DEGRADED)
+
+    def test_the_readiness_wait_gives_up_on_a_fake_clock(self):
+        ticks = iter(range(0, 200, 10))
+        calls = []
+
+        def dead(req, timeout=None, context=None):
+            calls.append(req.full_url)
+            raise OSError("connection refused")
+
+        result = gates.wait_until_listening(LOCAL_SERVER_URL, dead, timeout=30,
+                                            sleep=lambda s: None, clock=lambda: next(ticks))
+        self.assertEqual(result["result"], FAIL)
+        self.assertIn("connection refused", result["detail"])
+        self.assertTrue(all(u.endswith("/delta-sharing/shares") for u in calls))
+
+    def test_a_401_counts_as_listening(self):
+        import urllib.error
+
+        def refuses(req, timeout=None, context=None):
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+        result = gates.wait_until_listening(LOCAL_SERVER_URL, refuses, timeout=1,
+                                            sleep=lambda s: None)
+        self.assertEqual(result["result"], PASS)
+
+    def test_a_storage_that_dies_mid_suite_still_reports(self):
+        class DiesOnStorage(FakeDeployment):
+            def __call__(self, req, timeout=None, context=None):
+                if "/delta-sharing/" in req.full_url:
+                    return super().__call__(req, timeout=timeout, context=context)
+                raise OSError("storage is unreachable")
+
+        results = run(opener=DiesOnStorage(CFG))
+        self.assertEqual(results[-1]["id"], "suite_completed")
+        self.assertNotEqual(resolve(results), st.VERIFIED)
 
 
 if __name__ == "__main__":

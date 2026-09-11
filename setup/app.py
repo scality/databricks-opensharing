@@ -88,10 +88,14 @@ class App:
         """The configuration as the page may see it: everything but the secret,
         plus a flag saying whether one is held. The page renders the flag so the
         operator can re-submit the form without retyping the key."""
-        if not self._cfg:
+        source = self._cfg or self._draft
+        if not source:
             return None
-        out = {k: v for k, v in self._cfg.items() if k != "secret_key"}
-        out["secret_set"] = bool(self._cfg.get("secret_key"))
+        out = {k: v for k, v in source.items() if k != "secret_key"}
+        out["secret_set"] = bool(source.get("secret_key"))
+        # A draft is what the operator typed before picking a table; the page
+        # shows it back so a reload mid-setup does not empty the form.
+        out["draft"] = self._cfg is None
         return out
 
     def get_profile(self):
@@ -150,8 +154,9 @@ class App:
         """
         incoming = dict(cfg or {})
         incoming["ca_pem_sha256"] = tls.ca_sha256(self.config_dir)
-        if not str(incoming.get("secret_key", "") or "").strip() and self._cfg:
-            incoming["secret_key"] = self._cfg.get("secret_key", "")
+        previous = self._cfg or self._draft
+        if not str(incoming.get("secret_key", "") or "").strip() and previous:
+            incoming["secret_key"] = previous.get("secret_key", "")
 
         storage_problems, warnings = checks.validate_storage(incoming)
         table_problems = checks.validate_tables(incoming)

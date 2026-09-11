@@ -466,6 +466,18 @@ class TestBrowse(AppCase):
         self.assertEqual(code, 200)
         self.assertEqual(body["tables"], self.FOUND)
 
+    def test_the_draft_is_shown_back_and_keeps_its_secret(self):
+        app, _ = self.make()
+        app.put_config(dict(CFG, tables=[]))
+        shown = app.get_status()["config"]
+        self.assertTrue(shown["draft"])
+        self.assertTrue(shown["secret_set"])
+        self.assertNotIn("secret_key", shown)
+        out = app.put_config(dict(CFG, secret_key=""))
+        self.assertTrue(out["ok"])
+        self.assertEqual(app._cfg["secret_key"], CFG["secret_key"])
+        self.assertFalse(app.get_status()["config"]["draft"])
+
     def test_a_storage_problem_leaves_nothing_to_browse_with(self):
         app, _ = self.make()
         out = app.put_config(dict(CFG, tables=[], bucket=""))

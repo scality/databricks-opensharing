@@ -194,6 +194,8 @@ async function refresh() {
       if (f !== "secret_key" && s.config[f]) $(f).value = s.config[f];
     }
     if (s.config.endpoint_mode) setMode(s.config.endpoint_mode);
+    // Say whether a secret is held rather than echoing it.
+    $("secret_key").placeholder = s.config.secret_set ? "stored — leave empty to keep" : "write-only";
     mergeTables(s.config.tables, true);
   }
   // `[]` is truthy, so `verdict.checks && []` would erase whatever prechecks are
