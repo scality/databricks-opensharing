@@ -4,6 +4,30 @@ A fork of [delta-io/delta-sharing](https://github.com/delta-io/delta-sharing), s
 
 The user-facing explanation is the README preamble and [`docs/scality/`](docs/scality/) — read those before changing anything; this file is only what an agent needs about the fork itself.
 
+## Working with Claude Code: the main session orchestrates, subagents do the work
+
+Keep the session the human types in lean. It holds requests, decisions and short
+conclusions; reading, searching, implementing, testing and reviewing happen in
+subagents (Agent tool), which return a summary rather than file dumps.
+
+- **Delegate by default** whenever a task means reading several files, sweeping the
+  codebase, implementing, running long gates, or reviewing. Work directly only for a
+  single-fact lookup or a one-line edit where the file and change are already known.
+- **Pick the model by complexity — Sonnet is the floor, never Haiku:**
+  - **Sonnet** — mechanical work whose target is already stated: searches, enumeration,
+    edits the tests pin, running gates, doc updates.
+  - **Opus** — judgement: design, debugging, reviews, anything that moves a figure or
+    classifies.
+  - **Fable** — sparingly, it is the most expensive: only the hardest calls, where
+    Opus is genuinely not enough — adversarial verification of a change that matters,
+    synthesis across many results, security-sensitive or schema/production-affecting
+    changes. One Fable pass at the end beats Fable on every step.
+- **Brief each subagent fully** — it starts with no context: goal, paths, constraints,
+  what "done" means, and what to report back. Ask for the conclusion and evidence, not
+  transcripts. Run independent agents in parallel.
+- **Relay only what matters** to the human: outcome, decisions needed, verification
+  evidence. A subagent's "tests pass" is a claim until the evidence is seen.
+
 ## What may diverge from upstream
 
 Keep the fork thin. Two things are ours and everything else should stay identical to the upstream tag we track:
