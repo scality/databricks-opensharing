@@ -13,8 +13,10 @@ not covered at all.
 
 Everything marked tested below was last exercised against the **published image** — the one
 this documentation is about, pulled anonymously from GHCR — rather than against a locally
-built one. The server rows were measured on `v1.4.1-scality.1`; the setup image exists
-from `v1.4.1-scality.2` and its rows are in the setup section below.
+built one. The server rows were measured on `v1.4.1-scality.1`. Every tag from
+`v1.4.1-scality.2` also publishes the setup image, and CI runs its integration test against
+the server built from that same tag; its rows are in the setup section below. The current
+release is `v1.4.1-scality.4`.
 
 | Claim | Status |
 | --- | --- |
@@ -230,8 +232,9 @@ warning). Fine for the x86 servers these deployments target; build locally with
 `linux/amd64`-only build, built `FROM` it by
 [`setup/Dockerfile`](../../setup/Dockerfile) so both images published under one version
 carry the same server build. Published by the same tag-driven workflow as the server
-image, from `v1.4.1-scality.2`; the image reports its own tag and the server version at
-start and on the page.
+image, from `v1.4.1-scality.2`; `/metrics` and the support bundle from
+`v1.4.1-scality.4`. The image reports its own tag and the server version at start and on
+the page.
 
 It puts a browser page on :8080's neighbour, :8088, in front of the two files above. The
 page automates the endpoint/credentials/tables/recipient decisions this document walks
