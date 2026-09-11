@@ -28,6 +28,24 @@
 >   --config /config/delta-sharing-server.yaml
 > ```
 >
+> **A second image renders that configuration for you instead of hand-editing it** —
+> `ghcr.io/scality/databricks-opensharing-setup`, a browser page on :8088 that walks the
+> endpoint, credentials, table selection and recipient URL, then applies, starts the
+> server and runs the verification gates:
+>
+> ```bash
+> docker run -d --platform linux/amd64 \
+>   -p 127.0.0.1:8088:8088 -p 8080:8080 \
+>   -v opensharing-config:/config \
+>   ghcr.io/scality/databricks-opensharing-setup:latest
+> ```
+>
+> The page binds every interface of the container, so the published port is the access
+> control — `127.0.0.1:8088:8088` above keeps it on the host's loopback. Login token,
+> the four sections of the page, `/config`'s contents and what the checks do and do not
+> prove: [`setup/README.md`](setup/README.md). Same tags as the server image, same
+> `linux/amd64`-only build.
+>
 > **Start here → [`docs/scality/`](docs/scality/)** — the Scality configuration that is not
 > obvious (path-style addressing, the signing region, and why the presigner needs `AWS_*` in
 > the process environment *as well as* the keys in `core-site.xml` — each one a silent 403

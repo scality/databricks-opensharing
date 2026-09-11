@@ -13,7 +13,8 @@ not covered at all.
 
 Everything marked tested below was last exercised against the **published image** — the one
 this documentation is about, `v1.4.1-scality.1`, pulled anonymously from GHCR onto the
-node — rather than against a locally built one.
+node — rather than against a locally built one. The setup image described below is not
+yet published as of this writing; the intended tag is `v1.4.1-scality.2` onward.
 
 | Claim | Status |
 | --- | --- |
@@ -85,6 +86,9 @@ launcher puts `<dist>/../conf` on the classpath. The image symlinks
 `conf/core-site.xml` to `/config/core-site.xml` so a single mounted `/config` supplies
 both files.
 
+The setup page (below) renders exactly these two files from what an operator enters —
+nothing more, nothing less.
+
 `config/delta-sharing-server.yaml`:
 
 ```yaml
@@ -150,11 +154,11 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://<fs.s3a.endpoint host>/
 
 ### TLS: three cases
 
-| The S3 endpoint serves | What to configure |
-| --- | --- |
-| HTTPS with a **publicly-trusted** certificate | Nothing beyond `fs.s3a.endpoint`. This is the shape a Databricks recipient needs in the end, since it fetches the presigned URLs from this host. |
-| HTTPS with a **private or corporate CA** | The server's JVM must trust that CA — see below. The recipient must trust it too, which rules the case out for Databricks Serverless but not for a co-located client. |
-| **Plain HTTP** | `fs.s3a.endpoint` as `http://…` **and** `<property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>` in `core-site.xml`. Lab-only: the presigned URLs are then plain HTTP as well. |
+| The S3 endpoint serves | What to configure | What the setup page does |
+| --- | --- | --- |
+| HTTPS with a **publicly-trusted** certificate | Nothing beyond `fs.s3a.endpoint`. This is the shape a Databricks recipient needs in the end, since it fetches the presigned URLs from this host. | Nothing further to enter; the page renders `fs.s3a.endpoint` as given. |
+| HTTPS with a **private or corporate CA** | The server's JVM must trust that CA — see below. The recipient must trust it too, which rules the case out for Databricks Serverless but not for a co-located client. | Accepts the CA (pasted or uploaded), builds the truststore, and sets `JAVA_TOOL_OPTIONS` on the child process — the two manual steps below, done in one form field. |
+| **Plain HTTP** | `fs.s3a.endpoint` as `http://…` **and** `<property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>` in `core-site.xml`. Lab-only: the presigned URLs are then plain HTTP as well. | Renders `fs.s3a.connection.ssl.enabled=false` and shows a standing on-screen warning; no other manual step. |
 
 A private CA is the case that is neither documented upstream nor a silent 403: the S3A
 client refuses the certificate on the first metadata read, and the failure surfaces
@@ -213,6 +217,25 @@ architecture, so an ARM host runs it under emulation (Docker prints a platform-m
 warning). Fine for the x86 servers these deployments target; build locally with
 `docker build` if you need a native ARM image.
 
+## The setup image
+
+`ghcr.io/scality/databricks-opensharing-setup` — same tags as the server image, same
+`linux/amd64`-only build, built `FROM` it by
+[`setup/Dockerfile`](../../setup/Dockerfile) so both images published under one version
+carry the same server build. Published by the same tag-driven workflow as the server
+image. Not yet published as of this writing; the intended tag is `v1.4.1-scality.2`
+onward.
+
+It puts a browser page on :8080's neighbour, :8088, in front of the two files above. The
+page automates the endpoint/credentials/tables/recipient decisions this document walks
+through by hand, then applies the rendered configuration, starts the server, and runs
+the gate suite below (steps 0–6 of "Verifying a deployment"; step 7, the reference
+client, stays manual). It does not add anything the manual recipes above do not already
+cover — it is the same three TLS modes, the same rest-endpoint precheck, the same
+signature check — packaged so an operator fills in a form instead of hand-editing XML
+and YAML. Details, the run command, the setup token, and what its checks do and do not
+prove: [`setup/README.md`](../../setup/README.md).
+
 ## One server process serves one S3 endpoint
 
 Worth knowing before designing a deployment that fronts more than one store.
@@ -232,6 +255,7 @@ per-bucket configuration in the presigner — would be a welcome contribution.
 | Profile | Where it runs | Notes |
 | --- | --- | --- |
 | Container | anywhere with a container runtime | The `docker run` in the README. Simplest, and what the published image is for. |
+| Container with the setup page | anywhere with a container runtime | the setup image; renders and verifies the two files below instead of hand-editing them |
 | Kubernetes | alongside ARTESCA on MetalK8s | Both files as a `Secret` mounted at `/config`; expose through the cluster ingress. |
 | Host service | a RING supervisor or any host with a JDK 17 | For hosts with no container runtime: extract the distribution from the image and run `bin/delta-sharing-server` under systemd. |
 
@@ -328,7 +352,9 @@ Two things to know before trying it:
 ## Verifying a deployment
 
 Walk the protocol surface and assert the data path, in this order. A failure at any step
-tells you which of the four traps above you hit:
+tells you which of the four traps above you hit. The setup page runs steps 0–6 itself, as
+its Apply/Verify gate suite; step 7, reading the share with the reference client, stays
+manual there too.
 
 0. Anonymous `GET /` on the S3 endpoint host — **403** means the host is a registered
    rest-endpoint, **400** means it is not (above). Do this first: the failure it catches

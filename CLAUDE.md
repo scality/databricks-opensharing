@@ -10,6 +10,7 @@ Keep the fork thin. Two things are ours and everything else should stay identica
 
 - **The presigner fix.** Upstream's `S3FileSigner` built its presigning client with an empty `S3ClientCreationParameters`, so `fs.s3a.endpoint` never reached it: metadata reads worked while every presigned URL pointed at `s3.amazonaws.com` and the recipient's fetch returned **403**. That is upstream [#753](https://github.com/delta-io/delta-sharing/issues/753); the fix is carried here and offered upstream as [PR #965](https://github.com/delta-io/delta-sharing/pull/965). ⚠ **This is the load-bearing change** — without it the server is unusable against a non-AWS endpoint, and the failure is a 403 at the recipient rather than an error on the server.
 - **The README preamble and `docs/scality/`**, plus the published container image `ghcr.io/scality/databricks-opensharing:latest` (the only image on Docker Hub is years old and predates the S3A endpoint handling this depends on).
+- **`setup/` and the second image it builds**, `ghcr.io/scality/databricks-opensharing-setup`. It touches no upstream file — `setup/Dockerfile` builds `FROM` the server image rather than editing it — so a rebase carries `setup/` through unchanged, the same as the docs.
 
 A change that is not one of those belongs upstream, not here.
 
@@ -24,6 +25,28 @@ git rebase --onto v<new-tag> v<old-tag> scality-1.4
 ```
 
 Resolve conflicts in favour of upstream everywhere except the two items above, then verify the presigner change is still present before pushing — a rebase that silently drops it leaves a server that passes its own tests and 403s every recipient.
+
+`setup/ci/integration.sh` must pass before a tag is pushed — it is the first automated
+check in this repository that would notice a dropped presigner fix, since it exercises
+the actual data path (presigned URL on the right host, `PAR1`, unsigned fetch refused)
+rather than the unit tests, which mock the server. It runs in
+[`publish-image.yml`](.github/workflows/publish-image.yml) ahead of the tag-push step, so
+a red run there blocks the push; run it locally against a candidate build before tagging
+if there is any doubt.
+
+## Release
+
+Tag `v<upstream>-scality.<n>`. [`publish-image.yml`](.github/workflows/publish-image.yml)
+publishes four refs from that one tag: `ghcr.io/scality/databricks-opensharing:<tag>`,
+`:latest`, `ghcr.io/scality/databricks-opensharing-setup:<tag>` and `-setup:latest`. Auth
+is `GITHUB_TOKEN`; no long-lived credential is stored.
+
+⚠ **A new GHCR package defaults to private** — an org's Packages settings do not make a
+package public merely because the repository publishing it is public. The first tag of a
+package (the server image already exists; the setup image does not yet) needs a one-time
+manual step in the GHCR package's own settings, *Change package visibility → Public*,
+before `docker pull` works anonymously. Nothing in the workflow does this, and there is
+no API call in this repository that would.
 
 ## Push policy
 
