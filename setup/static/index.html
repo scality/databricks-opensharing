@@ -1,0 +1,158 @@
+<!doctype html>
+<meta charset="utf-8"><title>Scality OpenSharing — Setup</title>
+<style>
+ body{font:14px system-ui,-apple-system,Segoe UI,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#202124}
+ h2{font-size:1.05rem;margin:2rem 0 .25rem;border-bottom:1px solid #ddd;padding-bottom:.3rem}
+ label{display:block;margin:.75rem 0 .2rem;font-weight:600}
+ input,select,textarea{width:100%;padding:.4rem;font:inherit;box-sizing:border-box}
+ textarea{min-height:8rem;font-family:ui-monospace,monospace;font-size:.9em}
+ .hint{font-size:.9em;color:#555;margin:.2rem 0 0}
+ .state{padding:.6rem .8rem;border-left:4px solid #999;background:#f6f6f6;margin:1rem 0}
+ .pass{color:#137333}.fail{color:#b3261e}.unknown{color:#8a6d00}
+ .warn{color:#8a6d00}
+ .notice{padding:.6rem .8rem;border-left:4px solid #c9a227;background:#fdf6e3;margin:.75rem 0}
+ .limit{font-size:.9em;color:#555;border-top:1px solid #ddd;margin-top:1.5rem;padding-top:.75rem}
+ button{padding:.45rem .9rem;font:inherit;margin-right:.5rem}
+ table{border-collapse:collapse;width:100%;margin-top:.5rem}
+ th,td{border:1px solid #ddd;padding:.3rem .4rem;text-align:left;font-size:.95em}
+ th{background:#f6f6f6}
+ td input[type=text]{width:100%}
+ .radio{font-weight:400;margin:.5rem 0 0}
+ .radio input{width:auto}
+</style>
+<h1>Scality OpenSharing — Setup</h1>
+
+<!-- The only way in. Whoever can read the container log is already privileged:
+     `docker logs <container>` prints "Setup token: <hex>" once, on first start.
+     This form is how that token becomes a session. app.js also brings it back on
+     a 401 from any later call, so a session that expires mid-use lands here. -->
+<div id="login">
+  <p>Enter the setup token printed to the container log on first start
+     (<code>docker logs &lt;container&gt;</code>).</p>
+  <!-- The token field must live in a <form>. Without one the browser warns
+       "Password field is not contained in a form", and pressing Enter is
+       silently inert — the operator has to find and click the button. A
+       one-field form submits on Enter, which is the path app.js's submit
+       handler depends on. -->
+  <form id="login_form">
+    <label for="login_token">Setup token</label>
+    <input id="login_token" type="password" autocomplete="off">
+    <p><button id="login_submit" type="submit">Log in</button></p>
+  </form>
+  <p class="fail" id="login_error" hidden></p>
+</div>
+
+<div id="app" hidden>
+  <div class="state" id="state">loading…</div>
+  <div class="state" id="state_detail" hidden></div>
+
+  <h2>Endpoint</h2>
+
+  <label for="platform">Scality platform</label>
+  <select id="platform"><option value="ring">RING</option><option value="artesca">ARTESCA</option></select>
+
+  <label for="s3_endpoint">S3 endpoint</label>
+  <input id="s3_endpoint" type="text" placeholder="https://s3.example.com">
+  <p class="hint">The hostname must be a registered rest-endpoint on CloudServer, the S3
+     service in both RING and ARTESCA. An anonymous request to its root answers 403 when
+     it is registered and 400 (InvalidURI) when it is not. Check runs that probe.</p>
+
+  <label>How the endpoint serves TLS</label>
+  <p class="radio"><label><input type="radio" name="endpoint_mode" id="mode_trusted" value="trusted" checked>
+     Publicly trusted certificate</label></p>
+  <p class="hint">Nothing else to configure. This is the shape a Databricks recipient needs,
+     since it fetches the presigned URLs from this host.</p>
+
+  <p class="radio"><label><input type="radio" name="endpoint_mode" id="mode_private_ca" value="private_ca">
+     Private or corporate CA</label></p>
+  <p class="hint">The server's JVM is given a truststore built from the CA below. The
+     recipient must trust the same CA, which rules this case out for Databricks Serverless
+     but not for a client next to the storage.</p>
+
+  <div id="ca_panel" hidden>
+    <label for="ca_pem">CA certificate (PEM)</label>
+    <textarea id="ca_pem" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+    <p class="hint">The certificate must name the host in the S3 endpoint. If that is an IP
+       address, the Subject Alternative Name must include the IP.</p>
+    <p><input id="ca_file" type="file" accept=".pem,.crt,.cer"></p>
+    <p>
+      <button id="ca_upload" type="button">Upload CA</button>
+      <button id="ca_remove" type="button">Remove CA</button>
+    </p>
+    <p class="hint">Stored CA fingerprint (SHA-256): <span id="ca_sha256">none</span></p>
+    <p class="fail" id="ca_error" hidden></p>
+  </div>
+
+  <p class="radio"><label><input type="radio" name="endpoint_mode" id="mode_http" value="http">
+     Plain HTTP</label></p>
+  <p class="hint">TLS is disabled on the S3 connection.</p>
+
+  <div id="http_panel" class="notice" hidden>
+    Presigned URLs will be plain HTTP, and a Databricks recipient will reject them.
+    Lab use only.
+  </div>
+
+  <label for="region">Region</label>
+  <input id="region" type="text" value="us-east-1">
+
+  <h2>Credentials</h2>
+
+  <label for="access_key">Access key</label>
+  <input id="access_key" type="text" autocomplete="off">
+
+  <label for="secret_key">Secret key</label>
+  <input id="secret_key" type="password" autocomplete="new-password" placeholder="write-only">
+  <p class="hint">The secret is never sent back to this page. Leaving the field empty keeps
+     the secret already stored; type a value only to replace it.</p>
+
+  <label for="bucket">Bucket</label>
+  <input id="bucket" type="text" placeholder="delta-share">
+
+  <h2>Tables</h2>
+  <p class="hint">Browse lists the bucket and reports every prefix holding a
+     <code>_delta_log</code> directory. Only the checked rows are shared.</p>
+  <p>
+    <button id="browse" type="button">Browse bucket</button>
+    <button id="add_prefix" type="button">+ add prefix by hand</button>
+  </p>
+  <p class="fail" id="browse_error" hidden></p>
+  <p class="warn" id="tables_truncated" hidden>Listing truncated: the bucket holds more
+     prefixes than one browse can walk. Add the remaining prefixes by hand.</p>
+  <table>
+    <thead><tr><th></th><th>Prefix</th><th>Share</th><th>Schema</th><th>Table</th></tr></thead>
+    <tbody id="tables_body"></tbody>
+  </table>
+
+  <h2>Recipient</h2>
+
+  <label for="share_public_url">Public share URL</label>
+  <input id="share_public_url" type="text" placeholder="https://share.example.com">
+  <p class="hint">What the recipient dials to reach this sharing server. Leave it empty to
+     use this host's own address.</p>
+  <p class="hint">Bearer token expiry: <span id="token_expires">not set</span></p>
+
+  <p>
+    <button id="check" type="button">Check</button>
+    <button id="apply" type="button">Apply &amp; start</button>
+    <button id="verify" type="button">Verify</button>
+    <button id="rotate" type="button">Rotate token</button>
+    <button id="profile" type="button" disabled>Download .share</button>
+  </p>
+
+  <div id="problems"></div>
+  <div id="warnings"></div>
+  <div id="checks"></div>
+
+  <p class="limit">
+    These checks run <strong>from this host</strong>. They show that the S3 endpoint
+    resolves and its certificate is trusted here — not that <strong>Databricks</strong>
+    can reach it. Databricks fetches presigned URLs from that hostname over the public
+    internet from its NCC egress addresses, which this tool cannot test from inside your
+    network. A green result here does not prove that path.
+  </p>
+  <p class="limit">
+    The recipient profile carries a bearer token. Its stated expiry is advisory —
+    nothing enforces it, so access ends when the token is rotated and not before.
+  </p>
+</div>
+<script src="/static/app.js"></script>

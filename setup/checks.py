@@ -46,6 +46,17 @@ def validate_inputs(cfg):
     and may still be the right choice — plain HTTP in a lab, or a deployment
     whose recipients dial this host directly.
     """
+    problems, warnings = validate_storage(cfg)
+    problems.extend(validate_tables(cfg))
+    return problems, warnings
+
+
+def validate_storage(cfg):
+    """The half of validate_inputs that does not involve the table selection.
+
+    Browsing the bucket needs exactly this half to hold and nothing more: the
+    operator has to be able to list tables before any table is chosen.
+    """
     problems = []
     warnings = []
 
@@ -74,6 +85,16 @@ def validate_inputs(cfg):
     if share_url and not (share_url.startswith("http://") or share_url.startswith("https://")):
         problems.append("share_public_url must start with http:// or https://")
 
+    if mode == "http":
+        warnings.append(HTTP_WARNING)
+    if not share_url:
+        warnings.append(NO_SHARE_URL_WARNING)
+    return problems, warnings
+
+
+def validate_tables(cfg):
+    """Problems with the table selection alone."""
+    problems = []
     tables = cfg.get("tables") or []
     if not tables:
         problems.append("at least one table is required")
@@ -101,12 +122,7 @@ def validate_inputs(cfg):
                             % ((where,) + tuple(str(k) for k in key)))
         seen.add(key)
 
-    if mode == "http":
-        warnings.append(HTTP_WARNING)
-    if not share_url:
-        warnings.append(NO_SHARE_URL_WARNING)
-
-    return problems, warnings
+    return problems
 
 
 def precheck_endpoint(url, ssl_ctx, opener=None):

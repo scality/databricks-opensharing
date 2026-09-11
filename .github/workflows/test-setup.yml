@@ -1,0 +1,35 @@
+# Unit tests for the setup page (setup/). Its own workflow, so a red gate here is read
+# as this code's failure and not lost inside the image build. Publishes nothing.
+name: Test setup page
+
+on:
+  push:
+    branches: [scality-1.4]
+    paths: ['setup/**', '.github/workflows/test-setup.yml']
+  pull_request:
+    branches: [scality-1.4]
+    paths: ['setup/**', '.github/workflows/test-setup.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # stdlib only: the runner's python3 and node are enough, no setup-* action needed.
+      - name: Python unit tests
+        working-directory: setup
+        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
+
+      - name: Page script tests
+        run: node setup/tests/app_js_test.mjs
+
+      # A public repository must not carry anything internal. Same expression the image
+      # job runs against the built image.
+      - name: No internal names in setup/
+        run: |
+          ! grep -rilE 'covea|isv\.scality|10\.0\.50\.|\b(ISVD|ISVA|SIZR)-[0-9]+\b|chicago' setup

@@ -24,6 +24,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
+  SETUP_IMAGE: ghcr.io/${{ github.repository }}-setup
 
 jobs:
   image:
@@ -47,6 +48,37 @@ jobs:
           echo "$out" | grep -q LAUNCHER_EXECUTABLE
           docker run --rm "$IMAGE:ci-${GITHUB_SHA}" --help 2>&1 | head -20 || true
 
+      # The setup image is built FROM the server image just built, by its local tag, so
+      # the two images published under one version are provably the same server build.
+      - name: Build the setup image
+        run: |
+          docker build --build-arg SERVER_IMAGE="$IMAGE:ci-${GITHUB_SHA}" \
+            -f setup/Dockerfile -t "$SETUP_IMAGE:ci-${GITHUB_SHA}" .
+
+      - name: Smoke-test the setup image
+        run: |
+          set -o pipefail
+          docker run --rm --entrypoint python3 "$SETUP_IMAGE:ci-${GITHUB_SHA}" -c 'print("python ok")'
+          docker run --rm --entrypoint keytool "$SETUP_IMAGE:ci-${GITHUB_SHA}" -help >/dev/null 2>&1 && echo "keytool ok"
+          # The documented run must reach the page: the container binds every interface,
+          # the published port is what restricts access.
+          docker run -d --name setup-smoke -p 127.0.0.1:18088:8088 "$SETUP_IMAGE:ci-${GITHUB_SHA}"
+          for i in $(seq 1 30); do
+            curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18088/ 2>/dev/null | grep -q 200 && break
+            sleep 1
+          done
+          curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18088/ | grep -q 200
+          docker logs setup-smoke 2>&1 | grep -q '^Setup token: ' && echo "token printed"
+          docker rm -f setup-smoke >/dev/null
+          # A public image must carry nothing internal.
+          docker run --rm --entrypoint sh "$SETUP_IMAGE:ci-${GITHUB_SHA}" -c \
+            '! grep -rilE "covea|isv\.scality|10\.0\.50\.|\b(ISVD|ISVA|SIZR)-[0-9]+\b|chicago" /opt/setup'
+
+      # End to end against CloudServer behind a self-signed CA, then over plain HTTP: the
+      # first automated check in this repository that would notice a dropped presigner fix.
+      - name: Integration test
+        run: PLATFORM= bash setup/ci/integration.sh "$SETUP_IMAGE:ci-${GITHUB_SHA}"
+
       # Publishing is tag-driven. A push to the release branch proves the build; it does
       # not move a tag anyone deploys.
       # Context values go through env rather than being interpolated into the shell
@@ -66,4 +98,8 @@ jobs:
           docker tag "$IMAGE:ci-${GITHUB_SHA}" "$IMAGE:latest"
           docker push "$IMAGE:${VERSION}"
           docker push "$IMAGE:latest"
-          echo "Published $IMAGE:${VERSION} and $IMAGE:latest" >> "$GITHUB_STEP_SUMMARY"
+          docker tag "$SETUP_IMAGE:ci-${GITHUB_SHA}" "$SETUP_IMAGE:${VERSION}"
+          docker tag "$SETUP_IMAGE:ci-${GITHUB_SHA}" "$SETUP_IMAGE:latest"
+          docker push "$SETUP_IMAGE:${VERSION}"
+          docker push "$SETUP_IMAGE:latest"
+          echo "Published $IMAGE:${VERSION}, $IMAGE:latest, $SETUP_IMAGE:${VERSION} and $SETUP_IMAGE:latest" >> "$GITHUB_STEP_SUMMARY"
