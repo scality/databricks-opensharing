@@ -22,6 +22,15 @@ subagents (Agent tool), which return a summary rather than file dumps.
     Opus is genuinely not enough — adversarial verification of a change that matters,
     synthesis across many results, security-sensitive or schema/production-affecting
     changes. One Fable pass at the end beats Fable on every step.
+- **A subagent does the work itself and never spawns another subagent.** Delegation is
+  the orchestrating session's job; one level deep is the whole design. If a subagent
+  judges the task needs a stronger model, it says so and stops — it does not launch
+  one. Measured 2026-09-13: two Sonnet agents each spent roughly 100k tokens deciding
+  to launch an Opus child and returned a plan instead of a result, so the cheap tier
+  was billed for nothing, the expensive one ran anyway, and the grandchild was
+  invisible to the orchestrator — no completion notification, and two of them writing
+  into one shared worktree. Say it in the brief ("do this yourself, do not use the
+  Agent tool"), because an agent handed a hard task reaches for that reflex on its own.
 - **Brief each subagent fully** — it starts with no context: goal, paths, constraints,
   what "done" means, and what to report back. Ask for the conclusion and evidence, not
   transcripts. Run independent agents in parallel.
