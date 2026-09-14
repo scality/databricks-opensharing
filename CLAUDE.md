@@ -37,6 +37,33 @@ subagents (Agent tool), which return a summary rather than file dumps.
 - **Relay only what matters** to the human: outcome, decisions needed, verification
   evidence. A subagent's "tests pass" is a claim until the evidence is seen.
 
+## Be concise and specific in everything you write for me
+
+Applies to every output a human reads — session replies, summaries of work done,
+emails, Jira tickets, Confluence and Drive docs, meeting agendas and notes, Slack
+messages, commit messages, PR descriptions, status reports. Subagents report under
+this rule too, and the orchestrating session re-applies it before relaying anything.
+
+- **Answer first, then stop.** No preamble, no restating the request back, no closing
+  offer of further help. If the answer is one sentence, write one sentence.
+- **Be specific, not general.** Name the file, the ticket key, the number, the command,
+  the date. "Fixed the tests" is not a report; "the 3 failing cases in
+  `gate-coverage.test.ts` pass, full suite green after the last edit" is.
+- **Label every claim: verified, asserted, or unknown.** Say which, and say what the
+  evidence was. Never round an unverified thing up to a fact.
+- **Report the outcome, not the process.** No narration of the steps taken, unless the
+  steps *are* the deliverable. No account of what was tried and abandoned.
+- **Bullets over paragraphs, one idea per bullet.** Cut adjectives, hedges, filler
+  openers, and transition language ("previously", "now unified", "as mentioned above").
+- **A number without its source is noise.** Give the source or drop the number.
+- **Say what is missing.** "Blocked — CI has not run since the last commit" is a
+  complete report. Padding around a gap is not.
+
+**This block is replicated verbatim** in `~/.claude/CLAUDE.md`, in
+`~/Developer/CLAUDE.md`, in `~/Developer/scality/CLAUDE.md` and in the checked-in
+`CLAUDE.md` of every repo Stéphane owns, so teammates' sessions follow it too. Edit
+one, edit all.
+
 ## What may diverge from upstream
 
 Keep the fork thin. Two things are ours and everything else should stay identical to the upstream tag we track:
