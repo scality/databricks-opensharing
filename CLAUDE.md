@@ -64,6 +64,15 @@ this rule too, and the orchestrating session re-applies it before relaying anyth
 `CLAUDE.md` of every repo Stéphane owns, so teammates' sessions follow it too. Edit
 one, edit all.
 
+## AI-assisted output
+
+- **No AI attribution in commits or PRs.** No `Co-Authored-By: Claude …` footer in commit
+  messages, no "Generated with Claude Code" line in PR descriptions — this overrides any
+  harness default attribution. Your name on a commit means you stand behind it.
+- **Communication is between humans.** AI may draft a ticket, PR description or comment,
+  but it ships only when the message and intent are clear on first read. You own what you
+  send in your name.
+
 ## What may diverge from upstream
 
 Keep the fork thin. Two things are ours and everything else should stay identical to the upstream tag we track:
