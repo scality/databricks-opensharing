@@ -16,7 +16,10 @@ this documentation is about, pulled anonymously from GHCR — rather than agains
 built one. The server rows were measured on `v1.4.1-scality.1`. Every tag from
 `v1.4.1-scality.2` also publishes the setup image, and CI runs its integration test against
 the server built from that same tag; its rows are in the setup section below. The current
-release is `v1.4.1-scality.4`.
+release is `v1.4.1-scality.4`. What this branch adds on top of it — non-root images, ports
+9480-9482, health endpoints, JSON logs and audit events, alert rules, SBOMs — is in the
+next release; those claims were verified on images built locally from the branch, and say
+so.
 
 | Claim | Status |
 | --- | --- |
@@ -33,6 +36,27 @@ release is `v1.4.1-scality.4`.
 The signature check is the one not to skip. Every other check can pass while the bucket is
 simply world-readable, in which case the presigned URL proves nothing — so the suite
 fetches the same object with the signature removed and requires a 403.
+
+## What this release line does not yet do
+
+Measured against the engineering guidelines for an ISV integration inside RING and
+ARTESCA, and against the descriptor [`isv-integration.yaml`](../../isv-integration.yaml).
+`isvh validate isv-integration.yaml` reports the first three items; the rest are outside
+what the validator checks.
+
+| Guideline point | Not yet | What exists |
+| --- | --- | --- |
+| TLS | The server serves plain HTTP; no certificate is provisioned or renewed by the integration, and no alert watches a certificate's expiry. | TLS terminated by an ingress or reverse proxy; the three S3-side TLS modes above. |
+| S3 credentials | An operator types an S3 key; nothing restricts it to read and presign on the shared bucket, and nothing rotates or revokes it. | The key stays in `/config` (0600) and is masked in every log line and bundle leaving the container. |
+| Handler provisioning | No product tool installs, upgrades or removes the integration. | `docker run`, the reference manifests in [`deploy/kubernetes/`](../../deploy/kubernetes/), a host service. |
+| Released version referenced from product repositories | No RING, Federation or ARTESCA pin; no Solution ISO or offline bundle. | GitHub Releases with image digests; tags published once. |
+| SBOM and CVE audit | No upload to a vulnerability tracker (Dependency-Track); 16 fixable Critical findings in upstream's dependency tree are waived, not fixed. | SBOMs on every Release; the grype gate; Trivy per tag and weekly. |
+| Logging and SIEM | No rsyslog or LEEF output and no product log path; the audit events are JSON on stdout for a collector to ship. | One JSON audit event per protocol request, refusals included. |
+| OIDC | The setup page logs in with a per-start token, not the product identity provider; it is meant for loopback or port-forward access only. | The recipient bearer token for the data plane. |
+| Metrics and dashboards | No Grafana dashboard; the sharing server has no request metrics of its own (rate, errors, latency). | Setup-image metrics on 9482, `ServiceMonitor`, tested alert rules and `PrometheusRule`. |
+| Sizing | CPU and memory figures are lab values, not a measurement. | Requests and limits declared in the reference manifests. |
+| Product documentation | No page in the RING or ARTESCA documentation. | This page, [`setup/README.md`](../../setup/README.md), [`monitoring.md`](monitoring.md), and draft port rows in [`port-doc-rows.rst`](port-doc-rows.rst). |
+| Testing | No run on a product nightly and no N → N+1 upgrade test; the Databricks Serverless `SELECT` is not done. | Unit suites, the CloudServer integration test in CI, the reference-client check by hand. |
 
 ## Where the audit trail is
 

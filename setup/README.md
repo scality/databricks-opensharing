@@ -304,7 +304,7 @@ rather than looking for a fault in the page.
 ## What is verified versus asserted
 
 Exercised by [`setup/ci/integration.sh`](ci/integration.sh) against Scality
-CloudServer, locally, as of 2026-09-11:
+CloudServer, locally, as of 2026-09-11, unless a row names another date or check:
 
 | Claim | Status |
 | --- | --- |
@@ -313,3 +313,7 @@ CloudServer, locally, as of 2026-09-11:
 | Plain-HTTP mode: apply and the gate suite passing, `fs.s3a.connection.ssl.enabled=false` rendered | **Tested** |
 | Publicly-trusted-certificate mode | **Not covered by the integration script** — exercised only by the two other modes |
 | A Databricks Serverless recipient reading a table configured through this page | **Not done** — see "What the checks prove", above |
+| The container runs as uid 1000; `/healthz`, `/readyz` and `/metrics` answer on 9482 | **Tested** — CI smoke step; locally on an image built from this branch, 2026-10-01 |
+| The container log carries the server's JSON lines and a successful `table.query` audit event, and no S3 key or bearer token | **Tested** — `setup/ci/integration.sh`, locally on an image built from this branch, 2026-10-01 |
+| A `/config` rendered on 8080 resumes on 8080 after an image upgrade | **Tested** — by hand, locally, 2026-10-01; unit tests in `tests/test_render.py` |
+| A `/config` volume written as root names the `chown` fix at start | **Tested** — by hand, locally, 2026-10-01; unit tests in `tests/test_entrypoint.py` |

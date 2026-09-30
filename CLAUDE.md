@@ -159,4 +159,13 @@ on 8080. Do not set `SERVER_PORT` in `setup/Dockerfile`, or every upgraded deplo
 
 ## Where it is used
 
+⚠ **What a release from this line changes for an existing consumer**, all documented
+in `setup/README.md` and `docs/scality/README.md`: both images run as uid 1000 (a setup
+`/config` volume written as root needs a one-off `chown`, which the container names in
+its log); the setup page and metrics move to 9481/9482 (`SETUP_PORT`/`METRICS_PORT` keep
+the old one); logs are JSON; `latest` stays frozen at `v1.4.1-scality.4`, so a consumer
+that pulls `latest` gets none of this until it names a tag. The raw server image takes its
+port from the mounted YAML, so a Kubernetes deployment with its own config and
+`runAsUser: 1000` sees only the JSON logs.
+
 The lab stack that deploys this server is [`isv-labs/scripts/stacks/artesca-plus-delta-sharing/`](../isv-labs/scripts/stacks/artesca-plus-delta-sharing/) — its `CLAUDE.md` carries the stack contract and its `RUNBOOK.md` the live environment, the public-endpoint paths and credential rotation. ⚠ **One server process signs for exactly one S3 endpoint**; that constraint is documented there and is not a configuration detail to work around here.

@@ -61,6 +61,10 @@
 > if missed), the deployment profiles, the TLS requirements for a Databricks Serverless
 > recipient, the Iceberg-via-Apache-XTable recipe, and **what is verified versus asserted**.
 >
+> **What it does not yet do as a component inside RING or ARTESCA** — TLS provisioning,
+> least-privilege S3 credentials, product packaging, product documentation and more — is
+> listed in [`docs/scality/README.md`](docs/scality/README.md#what-this-release-line-does-not-yet-do).
+>
 > **Support model.** Community-supported open source: issues and pull requests on this
 > repository are the channel. No SLA, no hosted service, not a Scality product. If you need
 > a contractual commitment, talk to your Scality contact rather than filing an issue.
