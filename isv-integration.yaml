@@ -1,0 +1,186 @@
+# IsvIntegration descriptor of this repository at the head of the release branch: what
+# the images published from it actually do. Where the integration does not yet meet a
+# rule, the field says what is true and the validator reports it; the list of what this
+# release does not yet do is in docs/scality/README.md.
+#
+#   isvh validate isv-integration.yaml
+#
+# Version and tag are the next release of this line; the digest is added once that tag is
+# published (the release notes carry it).
+apiVersion: isv.scality.com/v1alpha1
+kind: IsvIntegration
+metadata:
+  name: isv-opensharing
+  displayName: Databricks OpenSharing (Delta Sharing server)
+  vendor: Databricks
+  version: 1.4.1-scality.5
+  owner: aliaksandr.hilevich@scality.com
+  description: >-
+    Delta Sharing server serving Delta tables stored on Scality S3 to Databricks
+    recipients, with an operator setup page that renders, starts and verifies it.
+spec:
+  products: [ring, artesca]
+
+  # Published once per tag; no floating tag is moved (publish-image.yml).
+  image:
+    repository: ghcr.io/scality/databricks-opensharing-setup
+    tag: v1.4.1-scality.5
+
+  # Lab values (deploy/kubernetes/deployment.yaml), not a measurement.
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+  # USER 1000:1000 in both Dockerfiles; the reference pod spec drops every capability.
+  security:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+
+  # deploy/ports.yaml. Outside the RING and S3C port pages, below 20480.
+  ports:
+    - name: server
+      port: 9480
+      protocol: TCP
+      exposure: external
+      purpose: api
+      auth: token
+      description: Delta Sharing protocol, plain HTTP in the container, one recipient bearer token; TLS is the ingress's
+    - name: setup
+      port: 9481
+      protocol: TCP
+      exposure: internal
+      purpose: ui
+      auth: token
+      description: Operator setup page, setup-token login; loopback or kubectl port-forward only
+    - name: metrics
+      port: 9482
+      protocol: TCP
+      exposure: internal
+      purpose: metrics
+      auth: none
+      description: Prometheus /metrics, /healthz and /readyz; no secret, no table name
+
+  healthchecks:
+    liveness: {type: http, port: metrics, path: /healthz, initialDelaySeconds: 10, periodSeconds: 15}
+    readiness: {type: http, port: metrics, path: /readyz, initialDelaySeconds: 15, periodSeconds: 10}
+
+  metrics:
+    port: metrics
+    path: /metrics
+    format: prometheus
+
+  # monitoring/alerts.yaml (the source; promtool-tested). No certificate-expiry rule:
+  # no series carries the public certificate's expiry.
+  alerts:
+    - alert: OpenSharingDownCritical
+      expr: up{job="isv-opensharing"} == 0
+      for: 5m
+      labels: {severity: critical, domain: ISV, feature: opensharing}
+      annotations:
+        summary: The OpenSharing setup process does not answer its metrics scrape
+    - alert: OpenSharingServerNotRunningCritical
+      expr: opensharing_server_running{job="isv-opensharing"} == 0 unless on(job, instance) opensharing_state{job="isv-opensharing", state="unconfigured"} == 1
+      for: 5m
+      labels: {severity: critical, domain: ISV, feature: opensharing}
+      annotations:
+        summary: A configured OpenSharing server is not running
+    - alert: OpenSharingCheckFailedWarning
+      expr: opensharing_check{job="isv-opensharing"} == 0
+      for: 10m
+      labels: {severity: warning, domain: ISV, feature: opensharing}
+      annotations:
+        summary: An OpenSharing verification check failed
+    - alert: OpenSharingCheckNotRunWarning
+      expr: opensharing_check{job="isv-opensharing"} == -1
+      for: 30m
+      labels: {severity: warning, domain: ISV, feature: opensharing}
+      annotations:
+        summary: An OpenSharing verification check could not run
+    - alert: OpenSharingNeverVerifiedInfo
+      expr: opensharing_state{job="isv-opensharing", state="never_verified"} == 1
+      for: 1h
+      labels: {severity: info, domain: ISV, feature: opensharing}
+      annotations:
+        summary: An OpenSharing server is serving a configuration nothing has verified
+    - alert: OpenSharingTokenExpiryWarning
+      expr: opensharing_token_expiry_timestamp_seconds{job="isv-opensharing"} - time() < 14 * 86400
+      for: 1h
+      labels: {severity: warning, domain: ISV, feature: opensharing}
+      annotations:
+        summary: The OpenSharing recipient token reaches its stated expiry within 14 days
+
+  # Unchanged: the operator types an S3 key into the setup page, and nothing restricts
+  # it to what the server needs (read and presign on the shared bucket). Least-privilege
+  # policy and handler provisioning are not implemented.
+  s3:
+    credentials:
+      model: service-user
+      provisionedBy: operator
+    buckets:
+      - name: ${SHARE_BUCKET}
+        access: readwrite
+        actions: ["s3:*"]
+
+  # One JSON object per line on stdout; one audit event per protocol request
+  # (scality/AccessAudit.scala), refusals included.
+  logging:
+    stdout: true
+    format: json
+    audit:
+      enabled: true
+      events:
+        - share.list
+        - share.get
+        - schema.list
+        - table.list
+        - table.list-all
+        - table.version
+        - table.metadata
+        - table.query
+        - table.query-status
+        - table.changes
+        - table.credentials
+
+  # The setup page is internal and logs in with a per-start setup token; no product
+  # OIDC client exists for it.
+  oidc:
+    required: false
+
+  # The server serves plain HTTP; TLS is terminated by the ingress or a reverse proxy
+  # the integration does not ship. Databricks needs a publicly trusted certificate.
+  tls:
+    required: false
+
+  config:
+    parameters:
+      - {name: SHARE_BUCKET, secret: false, required: true, description: Bucket holding the shared Delta tables}
+      - {name: AWS_ACCESS_KEY_ID, secret: true, required: true, description: S3 access key typed in the setup page}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: true, required: true, description: S3 secret key typed in the setup page}
+      - {name: BEARER_TOKEN, secret: true, required: true, description: "Recipient bearer token, minted and rotated by the setup page"}
+      - {name: SERVER_PORT, secret: false, required: false, description: "Sharing server port, default 9480; unset, an existing /config keeps its port"}
+      - {name: SETUP_PORT, secret: false, required: false, description: "Setup page port, default 9481"}
+      - {name: METRICS_PORT, secret: false, required: false, description: "Metrics and probe port, default 9482"}
+
+  # /config persists across a replacement; one pod owns it.
+  upgrade:
+    strategy: Recreate
+    migrations: []
+
+  # The fork's own pages; product RST pages for Technical Publications are not written.
+  docs:
+    pages:
+      - {kind: install, title: Running the sharing server against Scality storage, path: docs/scality/README.md}
+      - {kind: configuration, title: The setup page, path: setup/README.md}
+      - {kind: upgrade, title: Upgrading a /config volume written as root, path: "setup/README.md#upgrading-a-config-volume-written-as-root"}
+      - {kind: troubleshooting, title: "Monitoring: metrics, alerts and runbooks", path: docs/scality/monitoring.md}
+      - {kind: reference, title: Ports, path: deploy/ports.yaml}
+
+  sizing:
+    perInstance: {cpu: "1", memory: 1Gi}
+    source: declared
+    reference: Lab limits in deploy/kubernetes/deployment.yaml, not measured.

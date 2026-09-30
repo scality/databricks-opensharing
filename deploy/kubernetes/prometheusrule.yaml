@@ -1,0 +1,88 @@
+# GENERATED from monitoring/alerts.yaml by monitoring/render-prometheusrule.py — edit
+# the source and re-run; CI fails when this file is stale. Loaded by the MetalK8s
+# Prometheus, which selects PrometheusRules carrying `metalk8s.scality.com/monitor`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: opensharing
+  labels:
+    app.kubernetes.io/name: opensharing
+    metalk8s.scality.com/monitor: ''
+spec:
+  groups:
+  - name: ISV.OpenSharing
+    rules:
+    - alert: OpenSharingDownCritical
+      expr: up{job="isv-opensharing"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: The OpenSharing setup process does not answer its metrics scrape
+        description: '{{ $labels.instance }} has not answered a scrape for 5 minutes. The setup process
+          and the sharing server it supervises are down or unreachable.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingdowncritical
+    - alert: OpenSharingServerNotRunningCritical
+      expr: opensharing_server_running{job="isv-opensharing"} == 0 unless on(job, instance) opensharing_state{job="isv-opensharing",
+        state="unconfigured"} == 1
+      for: 5m
+      labels:
+        severity: critical
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: A configured OpenSharing server is not running
+        description: '{{ $labels.instance }} holds a configuration but the sharing server has not been
+          running for 5 minutes; recipients get no answer.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingservernotrunningcritical
+    - alert: OpenSharingCheckFailedWarning
+      expr: opensharing_check{job="isv-opensharing"} == 0
+      for: 10m
+      labels:
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: An OpenSharing verification check failed
+        description: Check {{ $labels.id }} failed on {{ $labels.instance }} at the last verification.
+          A per-table check names the table by its position in the configuration (label `table`); the
+          page names it.
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingcheckfailedwarning
+    - alert: OpenSharingCheckNotRunWarning
+      expr: opensharing_check{job="isv-opensharing"} == -1
+      for: 30m
+      labels:
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: An OpenSharing verification check could not run
+        description: 'Check {{ $labels.id }} could not run on {{ $labels.instance }} at the last verification:
+          an absent measurement, not a finding about the share.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingchecknotrunwarning
+    - alert: OpenSharingNeverVerifiedInfo
+      expr: opensharing_state{job="isv-opensharing", state="never_verified"} == 1
+      for: 1h
+      labels:
+        severity: info
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: An OpenSharing server is serving a configuration nothing has verified
+        description: '{{ $labels.instance }} has served for an hour without a verification (after a restart,
+          the previous verdict does not carry over). Press Verify.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingneververifiedinfo
+    - alert: OpenSharingTokenExpiryWarning
+      expr: opensharing_token_expiry_timestamp_seconds{job="isv-opensharing"} - time() < 14 * 86400
+      for: 1h
+      labels:
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      annotations:
+        summary: The OpenSharing recipient token reaches its stated expiry within 14 days
+        description: 'The recipient token on {{ $labels.instance }} carries an expiry date less than 14
+          days away. The date is advisory: the server does not enforce it.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingtokenexpirywarning

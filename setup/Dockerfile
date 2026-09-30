@@ -29,11 +29,15 @@ RUN apt-get update && \
 COPY setup/ /opt/setup/
 
 # The page binds every interface of the CONTAINER; what reaches it is decided by the
-# port you publish. `-p 127.0.0.1:8088:8088` keeps it on the host's loopback.
+# port you publish. `-p 127.0.0.1:9481:9481` keeps it on the host's loopback.
+# Ports (deploy/ports.yaml): 9480 sharing server, 9481 page, 9482 metrics and probes.
+# SERVER_PORT is deliberately not set here: unset, a /config rendered on another port
+# keeps that port (setup/render.py resolve_server_port).
 ENV CONFIG_DIR=/config \
     SETUP_BIND=0.0.0.0 \
-    SETUP_PORT=8088
-EXPOSE 8080 8088
+    SETUP_PORT=9481 \
+    METRICS_PORT=9482
+EXPOSE 9480 9481 9482
 
 # /config is a volume so the rendered configuration survives a container replacement.
 # It exists in the image owned by uid 1000, so a new named volume starts with that owner.

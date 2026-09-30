@@ -21,7 +21,7 @@ shares:
             historyShared: true
 
 host: "0.0.0.0"
-port: 8080
+port: 9480
 endpoint: "/delta-sharing"
 preSignedUrlTimeoutSeconds: 3600
 

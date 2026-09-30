@@ -24,8 +24,15 @@ from xml.sax.saxutils import escape as _xml_escape
 # and any URL we build for a recipient must agree, or the recipient sees a 404 it
 # cannot diagnose.
 ENDPOINT_PREFIX = "/delta-sharing"
-SERVER_PORT = 8080
 PRESIGNED_TIMEOUT_SECONDS = 3600
+
+# The sharing server's port. 9480 is the default: outside every port the RING and S3C
+# port pages list (8080 is bizstore's Simple Web Service there) and below the RING
+# kernel local port range 20480-65001. The entrypoint sets SERVER_PORT once at start
+# with resolve_server_port(); every renderer reads it at call time.
+DEFAULT_SERVER_PORT = 9480
+SERVER_PORT = DEFAULT_SERVER_PORT
+_PORT_LINE_RE = re.compile(r"^port: (\d{1,5})$")
 
 CORE_SITE_FILE = "core-site.xml"
 SERVER_YAML_FILE = "delta-sharing-server.yaml"
@@ -223,6 +230,37 @@ _ID_RE = re.compile(r'^            id: "[^"]*"$')
 _TOKEN_RE = re.compile(r'^  bearerToken: "(?P<v>[^"]*)"$')
 
 
+def valid_port(value):
+    """`value` as a TCP port number, or ValueError."""
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise ValueError("port out of range: %r" % value)
+    return port
+
+
+def resolve_server_port(environ, config_dir):
+    """The port the sharing server listens on, decided once at start.
+
+    1. `SERVER_PORT` in the environment, when set: the operator chose.
+    2. The port in a configuration already rendered in `config_dir`: a deployment
+       made before the default moved keeps serving where its clients and published
+       ports expect it, across restarts and re-applies.
+    3. DEFAULT_SERVER_PORT.
+    """
+    explicit = (environ.get("SERVER_PORT") or "").strip()
+    if explicit:
+        return valid_port(explicit)
+    try:
+        with open(os.path.join(config_dir, SERVER_YAML_FILE)) as handle:
+            for line in handle:
+                match = _PORT_LINE_RE.match(line.rstrip("\n"))
+                if match:
+                    return valid_port(match.group(1))
+    except (OSError, ValueError):
+        pass
+    return DEFAULT_SERVER_PORT
+
+
 def parse_server_yaml(text):
     """Read back exactly the format `server_yaml` emits, and nothing else.
 
@@ -239,8 +277,13 @@ def parse_server_yaml(text):
 
     for raw in text.splitlines():
         line = raw.rstrip("\n")
+        # Any port line: the port is not part of the reconstructed configuration —
+        # resolve_server_port() reads it — and a file rendered under another default
+        # is still a file this module wrote.
+        if _PORT_LINE_RE.match(line):
+            continue
         if line == "" or line in ("version: 1", "shares:", "authorization:",
-                                  'host: "0.0.0.0"', "port: %d" % SERVER_PORT,
+                                  'host: "0.0.0.0"',
                                   'endpoint: "%s"' % ENDPOINT_PREFIX,
                                   "preSignedUrlTimeoutSeconds: %d" % PRESIGNED_TIMEOUT_SECONDS,
                                   "    schemas:", "        tables:",

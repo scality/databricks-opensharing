@@ -165,7 +165,7 @@ object AccessAudit {
       case "shares" :: Nil => ("share.list", Nil)
       case "shares" :: s :: Nil => ("share.get", Seq("share" -> s))
       case "shares" :: s :: "schemas" :: Nil => ("schema.list", Seq("share" -> s))
-      case "shares" :: s :: "all-tables" :: Nil => ("table.list_all", Seq("share" -> s))
+      case "shares" :: s :: "all-tables" :: Nil => ("table.list-all", Seq("share" -> s))
       case "shares" :: s :: "schemas" :: sc :: "tables" :: Nil =>
         ("table.list", Seq("share" -> s, "schema" -> sc))
       case "shares" :: s :: "schemas" :: sc :: "tables" :: t :: rest =>
@@ -175,7 +175,7 @@ object AccessAudit {
           case "version" :: Nil => "table.version"
           case "metadata" :: Nil => "table.metadata"
           case "query" :: Nil => "table.query"
-          case "queries" :: _ :: Nil => "table.query_status"
+          case "queries" :: _ :: Nil => "table.query-status"
           case "changes" :: Nil => "table.changes"
           case "temporary-table-credentials" :: Nil => "table.credentials"
           case _ => "unknown"

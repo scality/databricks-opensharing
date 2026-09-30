@@ -1,0 +1,52 @@
+# Ports the Databricks OpenSharing sidecar listens on. Machine-readable; the same data as
+# `spec.ports` in isv-integration.yaml and the draft documentation rows in
+# docs/scality/port-doc-rows.rst.
+#
+# Why these numbers: 9480-9482 appear in none of the ports the RING and S3C port pages
+# list (docs-ring-s3c RING/operation/03_ring_monitoring/configuring_network_ports.rst,
+# S3C/.../Configuring_S3_Connector_Network_Ports.rst), nor in the reserved-port catalogue
+# of the ISV handler validator, and sit below the RING kernel local port range
+# 20480-65001, so they need no ip_local_reserved_ports entry. The nearest listed ports are
+# 9427 (ping_exporter) and 9443/9444 (OSIS). 8080 and 8088, the defaults before, collide
+# on a host-network RING node with bizstore's Simple Web Service (8080) and bizstorenode's
+# DSUP/sagentd administration range 8084-8095.
+#
+# Every port stays configurable; `legacyDefault` is the number a deployment made before
+# this release uses, and `override` how to keep it.
+ports:
+  - name: server
+    port: 9480
+    protocol: TCP
+    legacyDefault: 8080
+    override: "`port:` in delta-sharing-server.yaml (server image); SERVER_PORT (setup image — unset, an existing /config keeps the port it was rendered with)"
+    bind: 0.0.0.0 (container)
+    direction: ingress
+    source: Databricks recipients, through the TLS-terminating ingress or reverse proxy
+    exposure: external, behind TLS termination
+    purpose: Delta Sharing protocol (REST), bearer-token authenticated
+    ring: host port on the node running the container (Federation network_mode host); publish through the customer's TLS front end
+    artesca: container port only; ClusterIP Service `opensharing` behind the workload-plane Ingress on 443 — no host listener, no firewall change
+  - name: setup
+    port: 9481
+    protocol: TCP
+    legacyDefault: 8088
+    override: SETUP_PORT (setup image)
+    bind: 0.0.0.0 (container); publish on 127.0.0.1 only
+    direction: ingress
+    source: the operator, on the host's loopback or through kubectl port-forward / an SSH tunnel
+    exposure: internal — not exposed in a product install
+    purpose: operator setup page and its API, setup-token login
+    ring: publish on 127.0.0.1 of the node only
+    artesca: in no Service; `kubectl port-forward deploy/opensharing 9481:9481`
+  - name: metrics
+    port: 9482
+    protocol: TCP
+    legacyDefault: 8088
+    override: METRICS_PORT (setup image)
+    bind: 0.0.0.0 (container)
+    direction: ingress
+    source: the product Prometheus and the kubelet
+    exposure: internal — monitoring network only
+    purpose: Prometheus /metrics, /healthz (liveness), /readyz (readiness); no authentication, no secret
+    ring: host port scraped by the S3C embedded Prometheus or a supervisor scrape job (job isv-opensharing)
+    artesca: ClusterIP Service `opensharing-metrics` scraped through the ServiceMonitor; no host listener

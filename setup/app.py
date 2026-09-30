@@ -30,7 +30,7 @@ TOKEN_TTL_DAYS = 90
 class App:
     def __init__(self, supervisor, auth, config_dir, share_url_default="",
                  opener=None, keytool="keytool",
-                 local_server_url="http://127.0.0.1:8080"):
+                 local_server_url="http://127.0.0.1:%d" % render.DEFAULT_SERVER_PORT):
         self.sup = supervisor
         self.auth = auth
         self.config_dir = config_dir

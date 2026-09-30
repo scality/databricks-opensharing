@@ -572,5 +572,46 @@ class TestConfigOwnership(unittest.TestCase):
         self.assertEqual(sup.resumed, [])
 
 
+
+class TestProbePort(unittest.TestCase):
+    """The metrics port answers the three probe paths and nothing else."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.sup = FakeSupervisor(ok=False)
+        self.app = App(self.sup, Auth(), self.dir, opener=offline_opener)
+        self.srv = HTTPServer(("127.0.0.1", 0), entrypoint.make_probe_handler(self.app))
+        self.port = self.srv.server_address[1]
+        thread = threading.Thread(
+            target=lambda: self.srv.serve_forever(poll_interval=0.01), daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.srv.shutdown(), self.srv.server_close()))
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", path)
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
+    def test_metrics_healthz_and_readyz(self):
+        status, body = self.get("/metrics")
+        self.assertEqual(status, 200)
+        self.assertIn(b"opensharing_setup_info", body)
+        self.assertEqual(self.get("/healthz"), (200, b"ok\n"))
+        self.assertEqual(self.get("/readyz")[0], 503)
+        self.sup.ok = True
+        self.assertEqual(self.get("/readyz")[0], 200)
+
+    def test_nothing_of_the_page_is_reachable(self):
+        for path in ("/", "/api/status", "/api/profile", "/static/index.html",
+                     "/api/support-bundle"):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path)[0], 404)
+
+
 if __name__ == "__main__":
     unittest.main()

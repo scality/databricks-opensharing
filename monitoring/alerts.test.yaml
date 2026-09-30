@@ -1,0 +1,169 @@
+# Unit tests for alerts.yaml:  promtool test rules monitoring/alerts.test.yaml
+# Each alert fires on the series it is about, after its `for`, and not before; an
+# unconfigured deployment raises no outage; a failed check and a check that could not
+# run raise different alerts.
+rule_files:
+- alerts.yaml
+evaluation_interval: 1m
+tests:
+- name: down fires after 5 minutes of failed scrapes
+  interval: 1m
+  input_series:
+  - series: up{job="isv-opensharing", instance="a:9482"}
+    values: 1 1 0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OpenSharingDownCritical
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: OpenSharingDownCritical
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        severity: critical
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: The OpenSharing setup process does not answer its metrics scrape
+        description: a:9482 has not answered a scrape for 5 minutes. The setup process and the sharing
+          server it supervises are down or unreachable.
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingdowncritical
+- name: a configured server that stopped is critical
+  interval: 1m
+  input_series:
+  - series: opensharing_server_running{job="isv-opensharing", instance="a:9482"}
+    values: '0x10'
+  - series: opensharing_state{job="isv-opensharing", instance="a:9482", state="unconfigured"}
+    values: '0x10'
+  - series: opensharing_state{job="isv-opensharing", instance="a:9482", state="stopped"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: OpenSharingServerNotRunningCritical
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: OpenSharingServerNotRunningCritical
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        severity: critical
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: A configured OpenSharing server is not running
+        description: a:9482 holds a configuration but the sharing server has not been running for 5 minutes;
+          recipients get no answer.
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingservernotrunningcritical
+- name: an unconfigured deployment is not an outage
+  interval: 1m
+  input_series:
+  - series: opensharing_server_running{job="isv-opensharing", instance="a:9482"}
+    values: '0x10'
+  - series: opensharing_state{job="isv-opensharing", instance="a:9482", state="unconfigured"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OpenSharingServerNotRunningCritical
+    exp_alerts: []
+- name: a failed check and a check that could not run alert apart
+  interval: 1m
+  input_series:
+  - series: opensharing_check{job="isv-opensharing", instance="a:9482", id="signature_required", table="1"}
+    values: '0x40'
+  - series: opensharing_check{job="isv-opensharing", instance="a:9482", id="rest_endpoint"}
+    values: -1x40
+  - series: opensharing_check{job="isv-opensharing", instance="a:9482", id="auth_required"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: OpenSharingCheckFailedWarning
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: OpenSharingCheckFailedWarning
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        id: signature_required
+        table: '1'
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: An OpenSharing verification check failed
+        description: Check signature_required failed on a:9482 at the last verification. A per-table check
+          names the table by its position in the configuration (label `table`); the page names it.
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingcheckfailedwarning
+  - eval_time: 11m
+    alertname: OpenSharingCheckNotRunWarning
+    exp_alerts: []
+  - eval_time: 31m
+    alertname: OpenSharingCheckNotRunWarning
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        id: rest_endpoint
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: An OpenSharing verification check could not run
+        description: 'Check rest_endpoint could not run on a:9482 at the last verification: an absent
+          measurement, not a finding about the share.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingchecknotrunwarning
+- name: serving an hour unverified is info
+  interval: 1m
+  input_series:
+  - series: opensharing_state{job="isv-opensharing", instance="a:9482", state="never_verified"}
+    values: 1x70
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: OpenSharingNeverVerifiedInfo
+    exp_alerts: []
+  - eval_time: 61m
+    alertname: OpenSharingNeverVerifiedInfo
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        state: never_verified
+        severity: info
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: An OpenSharing server is serving a configuration nothing has verified
+        description: a:9482 has served for an hour without a verification (after a restart, the previous
+          verdict does not carry over). Press Verify.
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingneververifiedinfo
+- name: a token expiring within 14 days warns
+  interval: 1m
+  input_series:
+  - series: opensharing_token_expiry_timestamp_seconds{job="isv-opensharing", instance="a:9482"}
+    values: 864000x70
+  alert_rule_test:
+  - eval_time: 61m
+    alertname: OpenSharingTokenExpiryWarning
+    exp_alerts:
+    - exp_labels:
+        job: isv-opensharing
+        instance: a:9482
+        severity: warning
+        domain: ISV
+        feature: opensharing
+      exp_annotations:
+        summary: The OpenSharing recipient token reaches its stated expiry within 14 days
+        description: 'The recipient token on a:9482 carries an expiry date less than 14 days away. The
+          date is advisory: the server does not enforce it.'
+        runbook: https://github.com/scality/databricks-opensharing/blob/scality-1.4/docs/scality/monitoring.md#opensharingtokenexpirywarning
+- name: a token expiring in 30 days does not warn
+  interval: 1m
+  input_series:
+  - series: opensharing_token_expiry_timestamp_seconds{job="isv-opensharing", instance="a:9482"}
+    values: 2592000x70
+  alert_rule_test:
+  - eval_time: 61m
+    alertname: OpenSharingTokenExpiryWarning
+    exp_alerts: []

@@ -1,0 +1,45 @@
+# Alert rules and Kubernetes manifests: promtool checks and unit-tests the rules, the
+# generated PrometheusRule must match its source, and the rendered manifests must validate
+# against the Kubernetes and Prometheus-operator schemas. Tools run as containers pinned by
+# digest (the organisation's Actions allowlist).
+name: Monitoring and manifests
+
+on:
+  push:
+    branches: [scality-1.4]
+    paths: ['monitoring/**', 'deploy/**', 'isv-integration.yaml', '.github/workflows/monitoring.yml']
+  pull_request:
+    branches: [scality-1.4]
+    paths: ['monitoring/**', 'deploy/**', 'isv-integration.yaml', '.github/workflows/monitoring.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROMETHEUS: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+  KUBECTL: registry.k8s.io/kubectl:v1.33.0@sha256:f34045623d83213df513fe9b395b793ebe29941bf3836e3496bd3600ae7677ee
+  KUBECONFORM: ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: promtool check rules
+        run: docker run --rm -v "$PWD/monitoring:/m" -w /m --entrypoint promtool "$PROMETHEUS" check rules alerts.yaml
+
+      - name: promtool test rules
+        run: docker run --rm -v "$PWD/monitoring:/m" -w /m --entrypoint promtool "$PROMETHEUS" test rules alerts.test.yaml
+
+      - name: PrometheusRule and descriptor match alerts.yaml
+        run: python3 monitoring/render-prometheusrule.py --check
+
+      - name: Manifests validate
+        run: |
+          docker run --rm -v "$PWD/deploy/kubernetes:/k" "$KUBECTL" kustomize /k > rendered.yaml
+          docker run --rm -v "$PWD:/w" "$KUBECONFORM" -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /w/rendered.yaml

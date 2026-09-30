@@ -93,8 +93,11 @@ Keep the fork thin. These are ours and everything else should stay identical to 
   `server/src/universal/conf/log4j.properties` selecting `JsonLayout`. ⚠ Upstream ships
   three slf4j bindings on one classpath; a rebase that restores `slf4j-simple` silently
   turns the JSON log and the audit events back into plain text.
-- **`deploy/`, `.grype.yaml`, `.github/`** — reference manifests and the release and
-  supply-chain workflows.
+- **`deploy/`, `monitoring/`, `isv-integration.yaml`, `.grype.yaml`, `.github/`** —
+  reference manifests, the port manifest, alert rules (source of the generated
+  `deploy/kubernetes/prometheusrule.yaml`; `monitoring/render-prometheusrule.py --check`
+  also compares the descriptor's alerts), the `IsvIntegration` descriptor, and the release
+  and supply-chain workflows.
 
 A change that is not one of those belongs upstream, not here.
 
@@ -144,6 +147,15 @@ the package's own settings.
 ## Push policy
 
 Owned repo: commit to the working branch and push after each commit. It is a **public** fork, so nothing internal — no customer names, no lab hostnames, no credentials — goes into a commit message, a doc or a test fixture.
+
+## Ports
+
+9480 server, 9481 setup page, 9482 metrics and probes ([`deploy/ports.yaml`](deploy/ports.yaml)).
+Chosen outside the RING and S3C port pages and below the RING kernel local range; each is
+configurable (`port:` in the server YAML, `SERVER_PORT`, `SETUP_PORT`, `METRICS_PORT`).
+⚠ With `SERVER_PORT` unset, the setup image keeps the port of a `/config` it finds already
+rendered (`render.resolve_server_port`) — that is what keeps an upgraded 8080 deployment
+on 8080. Do not set `SERVER_PORT` in `setup/Dockerfile`, or every upgraded deployment moves.
 
 ## Where it is used
 

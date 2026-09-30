@@ -60,6 +60,8 @@ RUN chmod +x bin/delta-sharing-server && \
 # change owner.
 USER 1000:1000
 
-EXPOSE 8080
+# The port is whatever `port:` says in the server YAML; 9480 is the documented default
+# (deploy/ports.yaml). EXPOSE is metadata only.
+EXPOSE 9480
 ENTRYPOINT ["bin/delta-sharing-server"]
 CMD ["--config", "/config/delta-sharing-server.yaml"]

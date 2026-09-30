@@ -7,9 +7,11 @@
 # Pin the image: set `images[].newTag` (and preferably `digest`) in kustomization.yaml
 # to a release from https://github.com/scality/databricks-opensharing/releases.
 #
-# Exposure: the `opensharing` Service carries the share protocol only; put the cluster
-# Ingress in front of it for recipients. The setup page is deliberately in no Service —
-# reach it with `kubectl port-forward deploy/opensharing 8088:8088`.
+# Ports (deploy/ports.yaml): 9480 share protocol, 9481 setup page, 9482 metrics and
+# probes. The `opensharing` Service carries the share protocol, for the cluster Ingress
+# in front of recipients; `opensharing-metrics` the metrics port. The setup page
+# is deliberately in no Service — reach it with
+# `kubectl port-forward deploy/opensharing 9481:9481`.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -54,16 +56,18 @@ spec:
           image: ghcr.io/scality/databricks-opensharing-setup
           ports:
             - name: server
-              containerPort: 8080
+              containerPort: 9480
             - name: setup
-              containerPort: 8088
+              containerPort: 9481
+            - name: metrics
+              containerPort: 9482
           # /healthz: the setup process answers. /readyz: the sharing server is up and
           # answers its own /healthz — so an unconfigured pod is live but not ready,
           # and no recipient traffic is routed to it.
           livenessProbe:
             httpGet:
               path: /healthz
-              port: setup
+              port: metrics
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 4
@@ -71,7 +75,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /readyz
-              port: setup
+              port: metrics
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
@@ -109,3 +113,25 @@ spec:
     - name: server
       port: 80
       targetPort: server
+---
+# Metrics only, for servicemonitor.yaml. Its own Service because it publishes pods that
+# are not ready: an unconfigured or failed deployment is exactly when the metrics must
+# still be scraped, and the share Service above must not route recipients to it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensharing-metrics
+  labels:
+    app.kubernetes.io/name: opensharing
+    app.kubernetes.io/component: metrics
+    # Becomes the Prometheus `job` label (servicemonitor.yaml `jobLabel`), the value
+    # monitoring/alerts.yaml matches on.
+    scality.com/job: isv-opensharing
+spec:
+  selector:
+    app.kubernetes.io/name: opensharing
+  publishNotReadyAddresses: true
+  ports:
+    - name: metrics
+      port: 9482
+      targetPort: metrics

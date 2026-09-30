@@ -195,5 +195,51 @@ class TestPurity(unittest.TestCase):
         self.assertNotIn("subprocess", source)
 
 
+
+class TestServerPort(unittest.TestCase):
+    """Which port the sharing server gets: env, then an existing file, then 9480."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir))
+
+    def _existing(self, port):
+        with open(os.path.join(self.dir, render.SERVER_YAML_FILE), "w") as handle:
+            handle.write("version: 1\nport: %d\n" % port)
+
+    def test_the_default_is_outside_the_ring_port_pages(self):
+        self.assertEqual(render.DEFAULT_SERVER_PORT, 9480)
+        self.assertEqual(render.resolve_server_port({}, self.dir), 9480)
+
+    def test_an_existing_deployment_keeps_its_port(self):
+        self._existing(8080)
+        self.assertEqual(render.resolve_server_port({}, self.dir), 8080)
+
+    def test_the_environment_wins_over_an_existing_file(self):
+        self._existing(8080)
+        self.assertEqual(render.resolve_server_port({"SERVER_PORT": "9500"}, self.dir), 9500)
+
+    def test_an_empty_environment_value_is_unset(self):
+        self.assertEqual(render.resolve_server_port({"SERVER_PORT": " "}, self.dir), 9480)
+
+    def test_an_invalid_port_is_refused(self):
+        for bad in ("0", "65536", "http"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    render.resolve_server_port({"SERVER_PORT": bad}, self.dir)
+
+    def test_a_file_rendered_on_another_port_still_parses(self):
+        cfg = cases.CASES[0][1]
+        saved = render.SERVER_PORT
+        try:
+            render.SERVER_PORT = 8080
+            text = render.server_yaml(cfg, cases.TOKEN)
+        finally:
+            render.SERVER_PORT = saved
+        self.assertIn("port: 8080", text)
+        self.assertEqual(render.parse_server_yaml(text),
+                         render.parse_server_yaml(render.server_yaml(cfg, cases.TOKEN)))
+
+
 if __name__ == "__main__":
     unittest.main()

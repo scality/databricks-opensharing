@@ -1,0 +1,19 @@
+# Scraped by the MetalK8s Prometheus, which selects ServiceMonitors carrying the
+# `metalk8s.scality.com/monitor` label in every namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: opensharing
+  labels:
+    app.kubernetes.io/name: opensharing
+    metalk8s.scality.com/monitor: ""
+spec:
+  jobLabel: scality.com/job
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opensharing
+      app.kubernetes.io/component: metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

@@ -52,7 +52,7 @@ An audit event is on the logger `io.delta.sharing.audit`:
 | `time` | when the request arrived (ISO-8601, UTC) |
 | `principal` | `recipient:<first 12 hex of SHA-256 of the token>` for the configured bearer token; `invalid-token`, `anonymous` (no token) or `unauthenticated` (no authorization configured). The token itself is never logged. |
 | `sourceIp`, `forwardedFor` | the peer address; the `X-Forwarded-For` header as received, when present (untrusted: whoever connects sets it) |
-| `action` | `share.list`, `share.get`, `schema.list`, `table.list`, `table.list_all`, `table.version`, `table.metadata`, `table.query`, `table.query_status`, `table.changes`, `table.credentials`, or `unknown` |
+| `action` | `share.list`, `share.get`, `schema.list`, `table.list`, `table.list-all`, `table.version`, `table.metadata`, `table.query`, `table.query-status`, `table.changes`, `table.credentials`, or `unknown` |
 | `resource`, `share`, `schema`, `table` | the names the path carries |
 | `status`, `result` | the HTTP status, and `success`, `denied` (401/403), `not_found`, `rejected` (other 4xx) or `error` |
 | `requestId` | the incoming `X-Request-Id` when it is well-formed (an ingress-nginx access log carries the same id), the server's own id otherwise |
@@ -136,7 +136,7 @@ shares:
             id: "00000000-0000-0000-0000-0000000000c0"
             historyShared: true
 host: "0.0.0.0"
-port: 8080
+port: 9480
 endpoint: "/delta-sharing"
 preSignedUrlTimeoutSeconds: 3600
 authorization:
@@ -207,7 +207,7 @@ docker run --rm --platform linux/amd64 --entrypoint keytool \
 
 # 2. Point the JVM at it. JAVA_TOOL_OPTIONS reaches the server process through the
 #    launcher, so nothing in the image changes.
-docker run -d --platform linux/amd64 -p 8080:8080 \
+docker run -d --platform linux/amd64 -p 9480:9480 \
   -v "$PWD/config:/config:ro" --env-file aws.env \
   -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/config/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit" \
   ghcr.io/scality/databricks-opensharing:<release tag> \
@@ -327,7 +327,8 @@ image, from `v1.4.1-scality.2`; `/metrics` and the support bundle from
 `v1.4.1-scality.4`. The image reports its own tag and the server version at start and on
 the page.
 
-It puts a browser page on :8080's neighbour, :8088, in front of the two files above. The
+It puts a browser page on :9481, next to the server on :9480, in front of the two files
+above. The
 page automates the endpoint/credentials/tables/recipient decisions this document walks
 through by hand, then applies the rendered configuration, starts the server, and runs
 the gate suite below (steps 0–6 of "Verifying a deployment"; step 7, the reference
@@ -355,9 +356,9 @@ token. Probe it instead of the TCP port:
 
 ```yaml
 livenessProbe:
-  httpGet: {path: /healthz, port: 8080}
+  httpGet: {path: /healthz, port: 9480}   # the server's `port:`
 readinessProbe:
-  httpGet: {path: /healthz, port: 8080}
+  httpGet: {path: /healthz, port: 9480}
 ```
 
 The setup image adds `/healthz` (the setup process answers) and `/readyz` (200 only while

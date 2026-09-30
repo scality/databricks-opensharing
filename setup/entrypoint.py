@@ -7,6 +7,7 @@ which status code a result deserves.
 import json
 import os
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -22,7 +23,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "static")
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 BIND = os.environ.get("SETUP_BIND", "0.0.0.0")
-PORT = int(os.environ.get("SETUP_PORT", "8088"))
+# Defaults outside the RING and S3C port pages and below the RING kernel local range
+# (see render.DEFAULT_SERVER_PORT). The page and the probe listener each have their
+# own port, so the page can stay on loopback while monitoring reaches /metrics.
+PORT = int(os.environ.get("SETUP_PORT", "9481"))
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9482"))
 SHARE_URL = os.environ.get("SHARE_PUBLIC_URL", "")
 LAUNCHER = ["/opt/delta-sharing-server/bin/delta-sharing-server",
             "--config", os.path.join(CONFIG_DIR, "delta-sharing-server.yaml")]
@@ -303,12 +308,51 @@ def make_handler(app, auth, static_dir=STATIC_DIR):
     return Handler
 
 
+PROBE_PATHS = ("/metrics", "/healthz", "/readyz")
+
+
+def make_probe_handler(app):
+    """The metrics port: /metrics, /healthz and /readyz, nothing else.
+
+    The same three answers the page port gives, on a port of their own, so a
+    scraper and a kubelet can reach them without the page — and its login — being
+    published anywhere."""
+    class ProbeHandler(BaseHTTPRequestHandler):
+        def _send(self, code, body, ctype):
+            raw = body.encode() if isinstance(body, str) else body
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):
+            path = urlsplit(self.path).path
+            if path == "/metrics":
+                return self._send(200, metrics.render(app.get_status()),
+                                  "text/plain; version=0.0.4; charset=utf-8")
+            if path == "/healthz":
+                return self._send(200, "ok\n", "text/plain; charset=utf-8")
+            if path == "/readyz":
+                code, body = app.readiness()
+                return self._send(code, json.dumps(body), "application/json")
+            return self._send(404, '{"error":"not found"}', "application/json")
+
+        def log_message(self, fmt, *args):
+            """Nothing is logged: a probe every few seconds is noise."""
+
+    return ProbeHandler
+
+
 def main():
+    import render
+    render.SERVER_PORT = render.resolve_server_port(os.environ, CONFIG_DIR)
     auth = Auth()
     # The server's output goes to the container's stdout as well as server.log: its
     # JSON log lines and audit events are what a log collector reads.
     sup = Supervisor(CONFIG_DIR, LAUNCHER, {}, mirror=sys.stdout.buffer)
-    app = App(sup, auth, CONFIG_DIR, share_url_default=SHARE_URL)
+    app = App(sup, auth, CONFIG_DIR, share_url_default=SHARE_URL,
+              local_server_url="http://127.0.0.1:%d" % render.SERVER_PORT)
 
     problem = config_dir_problem(CONFIG_DIR)
     if problem:
@@ -326,7 +370,10 @@ def main():
     import version
     print("Setup image %s, sharing server %s" % (version.setup_version(), version.server_version() or "unknown"), flush=True)
     print("Setup token: %s" % auth.bootstrap, flush=True)
-    print("Listening on http://%s:%d" % (BIND, PORT), flush=True)
+    print("Listening on http://%s:%d; metrics and probes on :%d; sharing server on :%d"
+          % (BIND, PORT, METRICS_PORT, render.SERVER_PORT), flush=True)
+    probes = ThreadingHTTPServer((BIND, METRICS_PORT), make_probe_handler(app))
+    threading.Thread(target=probes.serve_forever, name="probes", daemon=True).start()
     # Threaded: apply, rotate and verify run inline for several seconds, and a
     # single-threaded server would block every other request — including a status
     # poll — for the whole duration. App's own lock is what stops two of them

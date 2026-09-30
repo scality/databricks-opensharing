@@ -113,7 +113,7 @@ PY
 run_setup() {
   docker rm -f "dsci-setup-$$" >/dev/null 2>&1 || true
   docker run -d --name "dsci-setup-$$" $PLATFORM --network "$NET" \
-    -p "127.0.0.1:${HOST_PORT}:8088" -v "dsci-config-$$:/config" "$IMAGE" >/dev/null
+    -p "127.0.0.1:${HOST_PORT}:9481" -v "dsci-config-$$:/config" "$IMAGE" >/dev/null
 }
 wait_page() {
   for i in $(seq 1 40); do

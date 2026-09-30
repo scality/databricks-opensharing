@@ -22,26 +22,26 @@
 > # the same keys as core-site.xml. The presigner reads them from the environment, so
 > # passing bare `-e AWS_ACCESS_KEY_ID` forwards whatever the shell has, and an unset
 > # shell variable becomes a silent 403 at the recipient.
-> docker run -d --platform linux/amd64 -p 8080:8080 \
+> docker run -d --platform linux/amd64 -p 9480:9480 \
 >   -v "$PWD/config:/config:ro" --env-file aws.env \
 >   ghcr.io/scality/databricks-opensharing:<release tag> \
 >   --config /config/delta-sharing-server.yaml
 > ```
 >
 > **A second image renders that configuration for you instead of hand-editing it** —
-> `ghcr.io/scality/databricks-opensharing-setup`, a browser page on :8088 that walks the
+> `ghcr.io/scality/databricks-opensharing-setup`, a browser page on :9481 that walks the
 > endpoint, credentials, table selection and recipient URL, then applies, starts the
 > server and runs the verification gates:
 >
 > ```bash
 > docker run -d --platform linux/amd64 \
->   -p 127.0.0.1:8088:8088 -p 8080:8080 \
+>   -p 127.0.0.1:9481:9481 -p 9480:9480 \
 >   -v opensharing-config:/config \
 >   ghcr.io/scality/databricks-opensharing-setup:<release tag>
 > ```
 >
 > The page binds every interface of the container, so the published port is the access
-> control — `127.0.0.1:8088:8088` above keeps it on the host's loopback. Login token,
+> control — `127.0.0.1:9481:9481` above keeps it on the host's loopback. Login token,
 > the four sections of the page, `/config`'s contents and what the checks do and do not
 > prove: [`setup/README.md`](setup/README.md). Same tags as the server image, same
 > `linux/amd64`-only build.
@@ -49,6 +49,11 @@
 > **`<release tag>` is a tag from [Releases](https://github.com/scality/databricks-opensharing/releases)**,
 > whose notes also give each image's digest to pin. A release tag is published once and no
 > floating tag is moved: `latest` is frozen at `v1.4.1-scality.4`.
+>
+> **Ports**: 9480 sharing server, 9481 setup page, 9482 metrics and probes — chosen
+> outside the RING port tables, where 8080 is bizstore's. Each stays configurable, and a
+> setup-image `/config` rendered on 8080 keeps serving on 8080
+> ([`deploy/ports.yaml`](deploy/ports.yaml)).
 >
 > **Start here → [`docs/scality/`](docs/scality/)** — the Scality configuration that is not
 > obvious (path-style addressing, the signing region, and why the presigner needs `AWS_*` in

@@ -15,24 +15,24 @@ build.
 
 ```bash
 docker run -d --platform linux/amd64 \
-  -p 127.0.0.1:8088:8088 \
-  -p 8080:8080 \
+  -p 127.0.0.1:9481:9481 \
+  -p 9480:9480 \
   -v opensharing-config:/config \
   -e SHARE_PUBLIC_URL=https://share.example.com \
   ghcr.io/scality/databricks-opensharing-setup:<release tag>
 ```
 
-`-p 8080:8080` publishes the sharing server that runs inside the same container,
-next to the setup page on :8088. Replace it with whatever ingress fronts the
+`-p 9480:9480` publishes the sharing server that runs inside the same container,
+next to the setup page on :9481. Replace it with whatever ingress fronts the
 share endpoint in your deployment — a load balancer, a reverse proxy — as long as
-it reaches the container's :8080. `SHARE_PUBLIC_URL` seeds the "Public share URL"
+it reaches the container's :9480. `SHARE_PUBLIC_URL` seeds the "Public share URL"
 field on first configuration; an operator-entered value in the page always wins
 over it. `/config` is a named volume so the rendered configuration, the server's
 own log and any private CA survive a container replacement.
 
 ⚠ **The page binds every interface of the container.** There is no listen-address
 option and no auth in front of it beyond the setup token below. The published
-port *is* the access control: `-p 127.0.0.1:8088:8088` (as above) keeps the page
+port *is* the access control: `-p 127.0.0.1:9481:9481` (as above) keeps the page
 on the host's loopback; publishing it on `0.0.0.0` puts it on the network with no
 further gate. Put the page behind SSH port-forwarding or a VPN for anything
 beyond a single trusted host.
@@ -207,25 +207,41 @@ the second table in the configuration. A check from a verdict taken before the
 table list changed keeps its full id: it belongs to no current position, and a
 table no longer configured is a table no longer shared.
 
-**Scraping it.** The endpoint sits on the page port, so `-p 127.0.0.1:8088:8088`
-keeps it on the host's loopback along with the page — leave it there and scrape
-from a Prometheus on the same host. If a Prometheus elsewhere must reach it,
-publish that port on the monitoring network and remember the page comes with it:
-the token is the only thing in front of the page, so put both behind the same
-network control you would have used for the page alone.
+**Scraping it.** `/metrics` is served on its own port, **9482**, as well as on
+the page port. Publish 9482 to the monitoring network (`-p <monitoring ip>:9482:9482`)
+and keep the page on loopback: the metrics port serves `/metrics`, `/healthz` and
+`/readyz` and answers 404 to everything else, so publishing it publishes nothing of
+the page. Name the job `isv-opensharing` — the alert rules in
+[`monitoring/alerts.yaml`](../monitoring/alerts.yaml) match on it; alerts and
+runbooks are in [`docs/scality/monitoring.md`](../docs/scality/monitoring.md).
 
 ```yaml
 scrape_configs:
-  - job_name: opensharing
+  - job_name: isv-opensharing
     metrics_path: /metrics
     static_configs:
-      - targets: ["127.0.0.1:8088"]
+      - targets: ["<host>:9482"]
 ```
+
+## Ports
+
+| Port | Serves | Setting |
+| --- | --- | --- |
+| 9480 | the sharing server (Delta Sharing protocol) | `SERVER_PORT` |
+| 9481 | the setup page and its API | `SETUP_PORT` |
+| 9482 | `/metrics`, `/healthz`, `/readyz` | `METRICS_PORT` |
+
+`SERVER_PORT` unset, a `/config` already rendered on another port keeps it: a
+`/config` rendered on 8080 (setup images up to `v1.4.1-scality.4`) goes on serving
+on 8080 after an image upgrade, and a re-apply renders 8080 again. Set `SERVER_PORT`
+to move it. The page port has no such memory: a deployment that publishes the page
+on 8088 sets `SETUP_PORT=8088` or changes its `-p` mapping, and a scrape of the page
+port's `/metrics` keeps working.
 
 ## Health endpoints
 
-Two probes on the page's port, both answering without a session and carrying nothing a
-scrape of `/metrics` does not:
+Two probes, on the metrics port and on the page's port, both answering without a
+session and carrying nothing a scrape of `/metrics` does not:
 
 | Path | Answers 200 when | Otherwise |
 | --- | --- | --- |

@@ -61,7 +61,7 @@ jobs:
         run: |
           set -o pipefail
           out="$(docker run --rm --entrypoint sh "$IMAGE:ci-${GITHUB_SHA}" \
-                   -c 'test -x bin/delta-sharing-server && echo LAUNCHER_EXECUTABLE')"
+                   -c 'test -x bin/delta-sharing-server && test "$(id -u)" = 1000 && echo LAUNCHER_EXECUTABLE')"
           echo "$out" | grep -q LAUNCHER_EXECUTABLE
           docker run --rm "$IMAGE:ci-${GITHUB_SHA}" --help 2>&1 | head -20 || true
 
@@ -85,12 +85,18 @@ jobs:
           docker run --rm --entrypoint keytool "$SETUP_IMAGE:ci-${GITHUB_SHA}" -help >/dev/null 2>&1 && echo "keytool ok"
           # The documented run must reach the page: the container binds every interface,
           # the published port is what restricts access.
-          docker run -d --name setup-smoke -p 127.0.0.1:18088:8088 "$SETUP_IMAGE:ci-${GITHUB_SHA}"
+          docker run -d --name setup-smoke -p 127.0.0.1:18088:9481 -p 127.0.0.1:18089:9482 \
+            "$SETUP_IMAGE:ci-${GITHUB_SHA}"
           for i in $(seq 1 30); do
             curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18088/ 2>/dev/null | grep -q 200 && break
             sleep 1
           done
           curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18088/ | grep -q 200
+          # The probe port: live, not ready (nothing configured), metrics served.
+          curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18089/healthz | grep -q 200
+          curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18089/readyz | grep -q 503
+          curl -sS http://127.0.0.1:18089/metrics | grep -q '^opensharing_setup_info'
+          docker exec setup-smoke sh -c 'test "$(id -u)" = 1000' && echo "runs as uid 1000"
           docker logs setup-smoke 2>&1 | grep -q '^Setup token: ' && echo "token printed"
           docker rm -f setup-smoke >/dev/null
           # A public image must carry nothing internal.
