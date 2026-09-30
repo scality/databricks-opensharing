@@ -6,8 +6,11 @@
 # Build:  docker build -t databricks-opensharing:dev .
 # Run:    see README.md
 
+# Both base images are pinned by digest (multi-arch index), so a rebuild of the same
+# commit starts from the same bytes; Dependabot's docker ecosystem proposes new digests.
+
 # ── Stage 1: compile ─────────────────────────────────────────────────────────
-FROM sbtscala/scala-sbt:eclipse-temurin-17_1.x AS builder
+FROM sbtscala/scala-sbt:eclipse-temurin-17_1.x@sha256:d28abfa430ba5c488f537f2ce296ce53a793979814008a06f22fc517c7aa1b8a AS builder
 
 WORKDIR /build
 
@@ -31,7 +34,7 @@ RUN sbt --batch "server/universal:packageBin" && \
 # `jar` is used rather than `unzip`, which the sbtscala image does not ship.
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:17-jre@sha256:34d6aaf0fa4ef553c470234ec23c32c7d5c0f370c2bd4b0bf8a16838052d85f0
 
 WORKDIR /opt/delta-sharing-server
 

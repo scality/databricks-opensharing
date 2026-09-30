@@ -1,0 +1,60 @@
+# Grype configuration for the CVE gate in .github/workflows/publish-image.yml.
+#
+# The gate fails a build on any Critical finding that has a fix available and is not
+# listed below. Everything else — High and lower, and Criticals with no fix — is reported
+# in the job summary and does not fail the build.
+#
+# Each entry is a finding accepted as of the baseline scan of v1.4.1-scality.4
+# (2026-10-01, grype 0.119.0). It pins the package VERSION, so a dependency change
+# re-surfaces the finding for triage instead of carrying the waiver forward silently.
+# All of them come from upstream delta-io/delta-sharing's own dependency tree; removing
+# one means a dependency bump in build.sbt, which is an upstream change first.
+ignore:
+  - vulnerability: GHSA-r7pg-v2c8-mfg3
+    reason: "transitive through upstream spark/hadoop dependencies"
+    package: {name: avro, version: "1.8.2"}
+  - vulnerability: GHSA-r7pg-v2c8-mfg3
+    reason: "transitive through upstream spark/hadoop dependencies"
+    package: {name: avro, version: "1.7.7"}
+  - vulnerability: GHSA-4gq5-ch57-c2mg
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-4w82-r329-3q67
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-6fpp-rgj9-8rwc
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-cggj-fvv3-cqwv
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-f3j5-rmmp-3fc5
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-gww7-p5w4-wrfv
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-p43x-xfjf-5jhr
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-q93h-jc49-78gg
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-qr7j-h6gg-jmgc
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-rfx6-vp9g-rh7v
+    reason: "pinned by upstream build.sbt: newer jackson-module-scala breaks delta-standalone"
+    package: {name: jackson-databind, version: "2.6.7.3"}
+  - vulnerability: GHSA-c4c3-7fpv-j4q5
+    reason: "transitive through Armeria 1.6.0 and Hadoop, upstream dependency versions"
+    package: {name: netty-handler, version: "4.1.100.Final"}
+  - vulnerability: GHSA-c4c3-7fpv-j4q5
+    reason: "transitive through Armeria 1.6.0 and Hadoop, upstream dependency versions"
+    package: {name: netty-handler, version: "4.1.72.Final"}
+  - vulnerability: GHSA-329j-jfvr-rhr6
+    reason: "upstream server dependency (spark-sql 2.4.7)"
+    package: {name: spark-core_2.12, version: "2.4.7"}
+  - vulnerability: GHSA-7286-pgfv-vxvh
+    reason: "transitive through Hadoop 3.3.4, upstream dependency version"
+    package: {name: zookeeper, version: "3.5.6"}

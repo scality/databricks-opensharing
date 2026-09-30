@@ -1,0 +1,40 @@
+# Weekly Trivy scan of the newest published release, through the organisation's reusable
+# workflow, so a CVE disclosed after a release reaches the Security tab without waiting
+# for the next tag. Reports only; the gate that can fail a build is the grype step in
+# publish-image.yml.
+name: Security scan
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  newest-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Newest release: ${tag:-none}" >> "$GITHUB_STEP_SUMMARY"
+
+  trivy:
+    needs: newest-release
+    if: needs.newest-release.outputs.tag != ''
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    uses: scality/workflows/.github/workflows/trivy.yaml@v2
+    with:
+      name: databricks-opensharing-setup
+      namespace: ${{ github.repository_owner }}
+      tag: ${{ needs.newest-release.outputs.tag }}

@@ -30,6 +30,11 @@ permissions:
 env:
   IMAGE: ghcr.io/${{ github.repository }}
   SETUP_IMAGE: ghcr.io/${{ github.repository }}-setup
+  # Supply-chain tools run as containers pinned by digest; Dependabot's docker ecosystem
+  # does not see these, so bump them by hand with the digest from `docker buildx
+  # imagetools inspect`.
+  SYFT: anchore/syft:v1.52.0@sha256:500e2d872ac019436926e8322b4fc1f39441d94d21f6f4046c6ff29b30e8cb02
+  GRYPE: anchore/grype:v0.119.0@sha256:8c2c9234a345577a6d321a4753aa3ee1276d8975c8452d2344a56b57733ecad3
 
 jobs:
   image:
@@ -96,6 +101,40 @@ jobs:
       # first automated check in this repository that would notice a dropped presigner fix.
       - name: Integration test
         run: PLATFORM= bash setup/ci/integration.sh "$SETUP_IMAGE:ci-${GITHUB_SHA}"
+
+      # An SBOM of each image just built, CycloneDX and SPDX, under the fixed names the
+      # Release attaches. Read from the runner's Docker daemon, so it describes these
+      # bytes and not whatever a registry holds.
+      - name: SBOM
+        run: |
+          mkdir -p sbom
+          for pair in "databricks-opensharing=$IMAGE" "databricks-opensharing-setup=$SETUP_IMAGE"; do
+            name="${pair%%=*}"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/out" \
+              "$SYFT" "docker:${pair#*=}:ci-${GITHUB_SHA}" -q \
+              -o "cyclonedx-json=/out/${name}.sbom.cdx.json" \
+              -o "spdx-json=/out/${name}.sbom.spdx.json"
+          done
+
+      # The CVE threshold: fail on a Critical finding with a fix available that is not
+      # waived in .grype.yaml. Everything else is counted in the job summary. Runs on
+      # every build, so a regression is caught on the pull request, not at release.
+      - name: CVE gate
+        run: |
+          for name in databricks-opensharing databricks-opensharing-setup; do
+            docker run --rm -v "$PWD:/work" "$GRYPE" "sbom:/work/sbom/${name}.sbom.cdx.json" \
+              -c /work/.grype.yaml -q -o json > "sbom/${name}.grype.json"
+          done
+          python3 .github/scripts/cve-gate.py \
+            server=sbom/databricks-opensharing.grype.json \
+            setup=sbom/databricks-opensharing-setup.grype.json
+
+      - name: Keep the SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+          retention-days: 30
 
       # Publishing is tag-driven. A push to the release branch proves the build; it does
       # not move a tag anyone deploys.
@@ -170,6 +209,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The SBOMs attached to the Release describe the published digests, read back from
+      # the registry, so their metadata names what a deployment pulls.
+      - name: SBOM of the published images
+        env:
+          SERVER_DIGEST: ${{ needs.image.outputs.server_digest }}
+          SETUP_DIGEST: ${{ needs.image.outputs.setup_digest }}
+        run: |
+          mkdir -p release-assets
+          for pair in "databricks-opensharing=$IMAGE@$SERVER_DIGEST" "databricks-opensharing-setup=$SETUP_IMAGE@$SETUP_DIGEST"; do
+            name="${pair%%=*}"
+            docker run --rm -v "$PWD/release-assets:/out" "$SYFT" "registry:${pair#*=}" -q \
+              -o "cyclonedx-json=/out/${name}.sbom.cdx.json" \
+              -o "spdx-json=/out/${name}.sbom.spdx.json"
+          done
+          ls -l release-assets
+
       - name: Write the release notes
         env:
           VERSION: ${{ needs.image.outputs.version }}
@@ -183,4 +238,50 @@ jobs:
           VERSION: ${{ needs.image.outputs.version }}
         run: |
           gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$VERSION" --notes-file release-notes.md
+            --title "$VERSION" --notes-file release-notes.md \
+            release-assets/databricks-opensharing.sbom.cdx.json \
+            release-assets/databricks-opensharing.sbom.spdx.json \
+            release-assets/databricks-opensharing-setup.sbom.cdx.json \
+            release-assets/databricks-opensharing-setup.sbom.spdx.json
+
+  # Trivy on the published tag, through the organisation's reusable workflow: results go
+  # to the repository's Security tab. It reports and does not gate — the gate is the
+  # grype step in `image`, which runs before anything is pushed. The setup image is the
+  # one scanned: it is the server image plus the setup page's layers, and the reusable
+  # workflow uploads every scan under one SARIF category, so a second image would
+  # replace the first.
+  trivy:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    uses: scality/workflows/.github/workflows/trivy.yaml@v2
+    with:
+      name: databricks-opensharing-setup
+      namespace: ${{ github.repository_owner }}
+      tag: ${{ needs.image.outputs.version }}
+
+  # Dependabot has no sbt ecosystem. Submitting the Maven packages found in the built
+  # server image to the dependency graph is what lets Dependabot raise alerts on the
+  # JVM dependencies sbt resolved, transitive ones included.
+  dependency-graph:
+    needs: image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/scality-1.4'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom
+      - name: Submit the dependency snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/sbom-to-dependency-snapshot.py \
+            sbom/databricks-opensharing.sbom.cdx.json > snapshot.json
+          gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/snapshots" --input snapshot.json

@@ -1,3 +1,9 @@
+# Dependabot version updates.
+#
+# sbt is not a Dependabot ecosystem, so build.sbt gets no update pull requests from here.
+# The JVM dependencies are covered for ALERTS instead: publish-image.yml submits the
+# Maven packages found in the built image to the dependency graph (job
+# `dependency-graph`), and Dependabot alerts read the graph.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -9,3 +15,17 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+
+  # Base images, pinned by digest in the root Dockerfile: a pull request per new digest,
+  # which is how an OS security fix in eclipse-temurin reaches the published image.
+  # setup/Dockerfile builds FROM the server image by build argument, so it has no base
+  # image of its own to update.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
