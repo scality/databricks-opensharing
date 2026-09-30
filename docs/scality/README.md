@@ -177,7 +177,7 @@ error. The fix is a truststore the JVM reads, mounted with the rest of `/config`
 ```bash
 # 1. Import the CA into a truststore, using the JDK inside the image so the versions match.
 docker run --rm --platform linux/amd64 --entrypoint keytool \
-  -v "$PWD/config:/config" ghcr.io/scality/databricks-opensharing:latest \
+  -v "$PWD/config:/config" ghcr.io/scality/databricks-opensharing:<release tag> \
   -importcert -noprompt -alias storage-ca -file /config/ca.pem \
   -keystore /config/truststore.jks -storepass changeit
 
@@ -186,7 +186,7 @@ docker run --rm --platform linux/amd64 --entrypoint keytool \
 docker run -d --platform linux/amd64 -p 8080:8080 \
   -v "$PWD/config:/config:ro" --env-file aws.env \
   -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/config/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit" \
-  ghcr.io/scality/databricks-opensharing:latest \
+  ghcr.io/scality/databricks-opensharing:<release tag> \
   --config /config/delta-sharing-server.yaml
 ```
 
@@ -217,9 +217,24 @@ carrying its own certificate.
 
 ## The published image
 
-`ghcr.io/scality/databricks-opensharing` — tagged `v<upstream>-scality.<n>` plus `latest`,
-built by [`publish-image.yml`](../../.github/workflows/publish-image.yml) from the source in
-this repository. Public: it pulls anonymously, no token needed.
+`ghcr.io/scality/databricks-opensharing` — tagged `v<upstream>-scality.<n>`, built by
+[`publish-image.yml`](../../.github/workflows/publish-image.yml) from the source in this
+repository. Public: it pulls anonymously, no token needed.
+
+**Pin a release, and preferably its digest.** Each release tag has a
+[GitHub Release](https://github.com/scality/databricks-opensharing/releases) whose notes give
+the registry digest of both images:
+
+```bash
+docker pull ghcr.io/scality/databricks-opensharing@sha256:<digest from the release notes>
+```
+
+- A release tag is published once. The workflow refuses a tag that either image already
+  carries, or that already has a Release, before it pushes anything — so a tag keeps
+  pointing at the bytes that were validated under it.
+- No floating tag is moved. `latest` still exists on both packages, frozen at
+  `v1.4.1-scality.4`, the last release that moved it; a deployment that pulls `latest`
+  keeps getting that build and nothing newer. Name a release tag instead.
 
 **`linux/amd64` only.** The build runs on GitHub's amd64 runners and publishes a single
 architecture, so an ARM host runs it under emulation (Docker prints a platform-mismatch

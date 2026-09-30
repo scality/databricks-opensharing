@@ -1,10 +1,16 @@
-# Build the server image from this repository's source and publish it to GHCR.
+# Build the server and setup images from this repository's source, publish them to GHCR
+# on a release tag, and create the GitHub Release that names what was published.
 #
-# Only `actions/checkout` is used, plus the docker CLI already on the runner. The
-# organisation restricts Actions to an allowlist (`allowed_actions: selected`) that does
-# not include `docker/*`, so `docker/login-action` and `docker/build-push-action` are
-# avoided deliberately — a workflow that needs an allowlist edit to run is a workflow that
-# fails on its first push.
+# Only `actions/checkout` is used, plus the docker and gh CLIs already on the runner. The
+# organisation restricts Actions to an allowlist (`allowed_actions: selected`), so every
+# other tool runs as a CLI or a container in a `run` step — a workflow that needs an
+# allowlist edit to run is a workflow that fails on its first push.
+#
+# Release contract, enforced below rather than by convention:
+#   - A release tag is published once. If either image already carries the tag, or a
+#     GitHub Release already exists for it, the run fails before anything is pushed.
+#   - Only the release tag is pushed. No floating tag (`latest`) is moved: a deployment
+#     names the tag, or better the digest the Release notes carry.
 name: Publish image
 
 on:
@@ -20,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
@@ -29,6 +34,13 @@ env:
 jobs:
   image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.push.outputs.version }}
+      server_digest: ${{ steps.push.outputs.server_digest }}
+      setup_digest: ${{ steps.push.outputs.setup_digest }}
     steps:
       - uses: actions/checkout@v5
 
@@ -96,16 +108,79 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-      - name: Push the release tags
+      # A tag that is already published is never published again: a deployment that
+      # pinned it must keep getting the bytes it validated. Both checks run before the
+      # first push, so a refused run leaves the registry and the Releases page as they
+      # were.
+      - name: Refuse a tag that is already published
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          refused=0
+          for ref in "$IMAGE:${VERSION}" "$SETUP_IMAGE:${VERSION}"; do
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "::error::$ref already exists; a release tag is published once. Tag the next v<upstream>-scality.<n> instead."
+              refused=1
+            fi
+          done
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::a GitHub Release named $VERSION already exists."
+            refused=1
+          fi
+          exit "$refused"
+
+      - name: Push the release tag
+        id: push
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           docker tag "$IMAGE:ci-${GITHUB_SHA}" "$IMAGE:${VERSION}"
-          docker tag "$IMAGE:ci-${GITHUB_SHA}" "$IMAGE:latest"
           docker push "$IMAGE:${VERSION}"
-          docker push "$IMAGE:latest"
           docker tag "$SETUP_IMAGE:ci-${GITHUB_SHA}" "$SETUP_IMAGE:${VERSION}"
-          docker tag "$SETUP_IMAGE:ci-${GITHUB_SHA}" "$SETUP_IMAGE:latest"
           docker push "$SETUP_IMAGE:${VERSION}"
-          docker push "$SETUP_IMAGE:latest"
-          echo "Published $IMAGE:${VERSION}, $IMAGE:latest, $SETUP_IMAGE:${VERSION} and $SETUP_IMAGE:latest" >> "$GITHUB_STEP_SUMMARY"
+          # The registry digest, which only exists once the push has landed. It is what
+          # the Release notes publish and what a deployment should pin.
+          server_digest="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE:${VERSION}" | grep "^$IMAGE@" | head -n1 | cut -d@ -f2)"
+          setup_digest="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$SETUP_IMAGE:${VERSION}" | grep "^$SETUP_IMAGE@" | head -n1 | cut -d@ -f2)"
+          test -n "$server_digest" && test -n "$setup_digest"
+          {
+            echo "version=${VERSION}"
+            echo "server_digest=${server_digest}"
+            echo "setup_digest=${setup_digest}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Published $IMAGE:${VERSION} (${server_digest})"
+            echo
+            echo "Published $SETUP_IMAGE:${VERSION} (${setup_digest})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The Release object for a published tag: notes naming both images by digest.
+  # `gh release create` rather than a release action: the CLI is on the runner already,
+  # and the job needs no allowlist entry.
+  release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.image.outputs.version }}
+          SERVER_DIGEST: ${{ needs.image.outputs.server_digest }}
+          SETUP_DIGEST: ${{ needs.image.outputs.setup_digest }}
+        run: bash .github/scripts/release-notes.sh > release-notes.md
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$VERSION" --notes-file release-notes.md

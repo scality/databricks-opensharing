@@ -8,8 +8,9 @@
 # Build:  docker build --build-arg SERVER_IMAGE=<server image> -f setup/Dockerfile -t <tag> .
 # Run:    see setup/README.md
 #
-# linux/amd64 only, like the server image it derives from.
-ARG SERVER_IMAGE=ghcr.io/scality/databricks-opensharing:latest
+# linux/amd64 only, like the server image it derives from. SERVER_IMAGE defaults to the
+# tag the root Dockerfile's own build line produces; CI passes the image it just built.
+ARG SERVER_IMAGE=databricks-opensharing:dev
 FROM ${SERVER_IMAGE}
 
 # The tag this image was built from, reported at start and on /api/status.

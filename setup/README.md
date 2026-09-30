@@ -5,9 +5,11 @@ A container image that puts a browser page in front of the sharing server:
 files the server reads, starts the server, and runs the same gate suite described
 in [`docs/scality/README.md`](../docs/scality/README.md#verifying-a-deployment) —
 so a deployment is checked before a recipient is handed anything, without typing
-YAML or XML by hand. Same tags as the server image (`v<upstream>-scality.<n>` and
-`latest`), `linux/amd64` only, built `FROM` the server image so both carry the
-same server build.
+YAML or XML by hand. Same tags as the server image (`v<upstream>-scality.<n>`; each
+release's notes give the digest to pin — see
+[The published image](../docs/scality/README.md#the-published-image)),
+`linux/amd64` only, built `FROM` the server image so both carry the same server
+build.
 
 ## Running it
 
@@ -17,7 +19,7 @@ docker run -d --platform linux/amd64 \
   -p 8080:8080 \
   -v opensharing-config:/config \
   -e SHARE_PUBLIC_URL=https://share.example.com \
-  ghcr.io/scality/databricks-opensharing-setup:latest
+  ghcr.io/scality/databricks-opensharing-setup:<release tag>
 ```
 
 `-p 8080:8080` publishes the sharing server that runs inside the same container,

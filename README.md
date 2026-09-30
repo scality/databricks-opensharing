@@ -24,7 +24,7 @@
 > # shell variable becomes a silent 403 at the recipient.
 > docker run -d --platform linux/amd64 -p 8080:8080 \
 >   -v "$PWD/config:/config:ro" --env-file aws.env \
->   ghcr.io/scality/databricks-opensharing:latest \
+>   ghcr.io/scality/databricks-opensharing:<release tag> \
 >   --config /config/delta-sharing-server.yaml
 > ```
 >
@@ -37,7 +37,7 @@
 > docker run -d --platform linux/amd64 \
 >   -p 127.0.0.1:8088:8088 -p 8080:8080 \
 >   -v opensharing-config:/config \
->   ghcr.io/scality/databricks-opensharing-setup:latest
+>   ghcr.io/scality/databricks-opensharing-setup:<release tag>
 > ```
 >
 > The page binds every interface of the container, so the published port is the access
@@ -45,6 +45,10 @@
 > the four sections of the page, `/config`'s contents and what the checks do and do not
 > prove: [`setup/README.md`](setup/README.md). Same tags as the server image, same
 > `linux/amd64`-only build.
+>
+> **`<release tag>` is a tag from [Releases](https://github.com/scality/databricks-opensharing/releases)**,
+> whose notes also give each image's digest to pin. A release tag is published once and no
+> floating tag is moved: `latest` is frozen at `v1.4.1-scality.4`.
 >
 > **Start here → [`docs/scality/`](docs/scality/)** — the Scality configuration that is not
 > obvious (path-style addressing, the signing region, and why the presigner needs `AWS_*` in

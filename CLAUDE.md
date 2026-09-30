@@ -78,7 +78,7 @@ one, edit all.
 Keep the fork thin. Two things are ours and everything else should stay identical to the upstream tag we track:
 
 - **The presigner fix.** Upstream's `S3FileSigner` built its presigning client with an empty `S3ClientCreationParameters`, so `fs.s3a.endpoint` never reached it: metadata reads worked while every presigned URL pointed at `s3.amazonaws.com` and the recipient's fetch returned **403**. That is upstream [#753](https://github.com/delta-io/delta-sharing/issues/753); the fix is carried here and offered upstream as [PR #965](https://github.com/delta-io/delta-sharing/pull/965). ⚠ **This is the load-bearing change** — without it the server is unusable against a non-AWS endpoint, and the failure is a 403 at the recipient rather than an error on the server.
-- **The README preamble and `docs/scality/`**, plus the published container image `ghcr.io/scality/databricks-opensharing:latest` (the only image on Docker Hub is years old and predates the S3A endpoint handling this depends on).
+- **The README preamble and `docs/scality/`**, plus the published container image `ghcr.io/scality/databricks-opensharing:<tag>` (the only image on Docker Hub is years old and predates the S3A endpoint handling this depends on).
 - **`setup/` and the second image it builds**, `ghcr.io/scality/databricks-opensharing-setup`. It touches no upstream file — `setup/Dockerfile` builds `FROM` the server image rather than editing it — so a rebase carries `setup/` through unchanged, the same as the docs.
 
 A change that is not one of those belongs upstream, not here.
@@ -106,9 +106,17 @@ if there is any doubt.
 ## Release
 
 Tag `v<upstream>-scality.<n>`. [`publish-image.yml`](.github/workflows/publish-image.yml)
-publishes four refs from that one tag: `ghcr.io/scality/databricks-opensharing:<tag>`,
-`:latest`, `ghcr.io/scality/databricks-opensharing-setup:<tag>` and `-setup:latest`. Auth
-is `GITHUB_TOKEN`; no long-lived credential is stored.
+publishes two refs from that one tag — `ghcr.io/scality/databricks-opensharing:<tag>` and
+`ghcr.io/scality/databricks-opensharing-setup:<tag>` — then creates the GitHub Release with
+both registry digests in its notes ([`.github/scripts/release-notes.sh`](.github/scripts/release-notes.sh)).
+Auth is `GITHUB_TOKEN`; no long-lived credential is stored.
+
+- ⚠ **A tag is published once.** The run fails before any push when either image already
+  carries the tag or a Release already exists for it. A bad release is fixed by the next
+  `-scality.<n>`, never by re-tagging.
+- **No floating tag moves.** `latest` on both packages is frozen at `v1.4.1-scality.4`;
+  nothing in the workflow pushes it, and the docs tell deployments to pin a release tag or
+  digest.
 
 **Check a new package pulls anonymously after its first tag.** Measured 2026-09-11 on the
 first push of `databricks-opensharing-setup`: the package was public immediately, so no
