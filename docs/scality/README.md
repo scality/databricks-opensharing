@@ -336,10 +336,18 @@ images (`linux/amd64`), before any change on this line:
 The 16 fixable Criticals are the waived set. The 4 without a fix are `log4j` 1.2.17
 (three) and `jackson-mapper-asl` 1.9.13.
 
-The same scan of this branch built locally from the digest-pinned base images (native
-`linux/arm64` build, 2026-10-01): server 4 Critical (0 with a fix), 139 High (134), 226
-Medium (122), 28 Low (21); the gate passes with the 16 waivers. The drop in High and
-Medium is the newer `eclipse-temurin:17-jre` base; the JVM findings are unchanged.
+The same scan of this branch, built locally (native `linux/arm64`, 2026-10-01), counting
+findings outside the waivers:
+
+| Image | Critical | High | Medium | Low |
+| --- | --- | --- | --- | --- |
+| server | 1 (0 with a fix) | 136 (133) | 226 (122) | 28 (21) |
+| setup | 1 (0 with a fix) | 136 (133) | 302 (122) | 28 (21) |
+
+The gate passes with the 16 waivers. The three `log4j` 1.2.17 Criticals are gone with
+the logging backend (reload4j 1.2.25 replaces it); the remaining one is
+`jackson-mapper-asl` 1.9.13, with no fix. The drop in High and Medium is the
+digest-pinned, newer `eclipse-temurin:17-jre` base.
 
 ## The setup image
 
