@@ -83,9 +83,16 @@ Keep the fork thin. These are ours and everything else should stay identical to 
 
 - **`server/src/main/scala/io/delta/sharing/server/scality/`** — what the server needs to
   run as a product component: `HealthCheck` (unauthenticated `GET /healthz`, the one path
-  exempted from the bearer-token check). Wired into `DeltaSharingService.start` by a
-  marked line or two; the rest of the upstream file is untouched, so a rebase conflicts
-  only there.
+  exempted from the bearer-token check), `AccessAudit` (one JSON audit event per protocol
+  request, wrapped around the authorization check so refusals are recorded) and
+  `JsonLayout` (every log line one JSON object). Wired into `DeltaSharingService.start`
+  by a few marked lines; the rest of the upstream file is untouched, so a rebase
+  conflicts only there.
+- **The logging backend in `build.sbt`** — slf4j bound to reload4j only, with
+  `log4j:log4j`, `slf4j-log4j12` and `slf4j-simple` excluded, and
+  `server/src/universal/conf/log4j.properties` selecting `JsonLayout`. ⚠ Upstream ships
+  three slf4j bindings on one classpath; a rebase that restores `slf4j-simple` silently
+  turns the JSON log and the audit events back into plain text.
 - **`deploy/`, `.grype.yaml`, `.github/`** — reference manifests and the release and
   supply-chain workflows.
 

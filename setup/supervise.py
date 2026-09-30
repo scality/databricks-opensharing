@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 
 FILES = ("core-site.xml", "delta-sharing-server.yaml", "truststore.jks")
@@ -16,13 +17,19 @@ LOG_NAME = "server.log"
 
 
 class Supervisor:
-    def __init__(self, config_dir, launcher, env, keytool="keytool"):
+    def __init__(self, config_dir, launcher, env, keytool="keytool", mirror=None):
         self.config_dir = config_dir
         self.launcher = list(launcher)
         self.base_env = dict(env)
         self.keytool = keytool
+        # A binary stream every line of the child's output is copied to as well as
+        # server.log — the container's own stdout in production, so the server's JSON
+        # log and its audit events reach the platform's log collector. None: file only.
+        self.mirror = mirror
         self.proc = None
         self.log = None  # the open file handle the current child's stdout/stderr go to
+        self._pump = None  # the thread copying the child's output to the log and mirror
+        self._current_token = None  # the bearer token of the configuration being launched
         # The (cfg, launcher) that were last proven to start successfully — what a
         # failed apply falls back to, since self.launcher/self.cfg at the moment of
         # failure may themselves be the broken half of the change being applied.
@@ -66,9 +73,48 @@ class Supervisor:
                 except subprocess.TimeoutExpired:
                     pass  # leaves a zombie only if the kill itself did not land
         self.proc = None
+        self._close_log()
+
+    def _close_log(self):
+        """Close server.log once the pump has written everything the child printed."""
+        self._join_pump()
         if self.log is not None:
             self.log.close()
             self.log = None
+
+    def _join_pump(self, timeout=5):
+        pump = self._pump
+        if pump is not None:
+            pump.join(timeout)
+            if not pump.is_alive():
+                self._pump = None
+
+    @staticmethod
+    def _copy_lines(source, log, mirror, secrets=()):
+        """Copy the child's output line by line, so a mirrored line is never split by
+        a line this process prints itself. Runs until the child closes its output.
+
+        server.log keeps the raw line (0600, and redacted on every way out of this
+        process); the mirror is a container log that a platform collects and keeps,
+        so each known secret is replaced before a line reaches it."""
+        masks = [x.encode() for x in secrets if x]
+        try:
+            for line in iter(source.readline, b""):
+                try:
+                    log.write(line)
+                    log.flush()
+                except ValueError:  # the log was closed under us: keep draining
+                    pass
+                if mirror is not None:
+                    for mask in masks:
+                        line = line.replace(mask, "«redacted»".encode())
+                    try:
+                        mirror.write(line)
+                        mirror.flush()
+                    except (ValueError, OSError):
+                        pass
+        finally:
+            source.close()
 
     def _backup(self):
         """Snapshot the config on disk into `<name>.prev`, overwriting any earlier
@@ -98,15 +144,26 @@ class Supervisor:
         """Start `launcher` against whatever config is currently on disk, replacing
         any child this Supervisor is tracking. Blocks for the start grace period and
         returns the new Popen."""
-        if self.log is not None:
-            self.log.close()
+        self._close_log()
         log_path = os.path.join(self.config_dir, LOG_NAME)
         self.log = open(log_path, "ab")
         # The JVM's own log can echo the parsed config on a startup failure (see
         # _redact below), so it gets the same 0600 as the credential files.
         os.chmod(log_path, 0o600)
+        # Through a pipe drained by a thread, not straight into the file: the same
+        # lines go to server.log (the page's tail and the support bundle) and to the
+        # mirror. The pipe is always read, so the child never blocks on a full buffer.
         proc = subprocess.Popen(launcher, cwd=self.config_dir, env=self.child_env(cfg),
-                                stdout=self.log, stderr=self.log)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        secrets = [cfg.get("secret_key"), cfg.get("access_key"), self._current_token]
+        if self._last_good:
+            secrets += [self._last_good.get("token"),
+                        self._last_good["cfg"].get("secret_key"),
+                        self._last_good["cfg"].get("access_key")]
+        self._pump = threading.Thread(target=self._copy_lines,
+                                      args=(proc.stdout, self.log, self.mirror, secrets),
+                                      name="server-log-pump", daemon=True)
+        self._pump.start()
         time.sleep(START_GRACE_SECONDS)
         return proc
 
@@ -115,6 +172,10 @@ class Supervisor:
         drains. A JVM server logs steadily; reading it after the fact (rather than
         holding the pipe open and never reading it) is what stops the ~64KB pipe
         buffer from filling and the child blocking on write mid-boot."""
+        # A child that has exited has closed its output; wait for the pump to write
+        # the last of it, or the tail misses the lines that say why it exited.
+        if self.proc is not None and self.proc.poll() is not None:
+            self._join_pump(timeout=2)
         path = os.path.join(self.config_dir, LOG_NAME)
         try:
             with open(path, "rb") as f:
@@ -170,6 +231,7 @@ class Supervisor:
 
         # Only now, with the new config safely on disk, replace the running server.
         self.stop()
+        self._current_token = token
         self.proc = self._launch(self.launcher, cfg)
         if self.running():
             self._last_good = {"cfg": cfg, "launcher": list(self.launcher),
@@ -186,6 +248,7 @@ class Supervisor:
         """Launch against the config already on disk, without rendering anything
         new — the startup path used when this process itself restarts and finds a
         previously-applied config still in place."""
+        self._current_token = token
         self.proc = self._launch(self.launcher, cfg)
         if self.running():
             self._last_good = {"cfg": cfg, "launcher": list(self.launcher),
@@ -210,6 +273,7 @@ class Supervisor:
         if self._last_good is None:
             return {"ok": False, "detail": failure_detail}
         good = self._last_good
+        self._current_token = good.get("token")
         self.proc = self._launch(good["launcher"], good["cfg"])
         if self.running():
             detail = "%s; restored the previous config and the previous server is running again" % failure_detail

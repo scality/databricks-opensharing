@@ -6,6 +6,7 @@ which status code a result deserves.
 """
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -304,7 +305,9 @@ def make_handler(app, auth, static_dir=STATIC_DIR):
 
 def main():
     auth = Auth()
-    sup = Supervisor(CONFIG_DIR, LAUNCHER, {})
+    # The server's output goes to the container's stdout as well as server.log: its
+    # JSON log lines and audit events are what a log collector reads.
+    sup = Supervisor(CONFIG_DIR, LAUNCHER, {}, mirror=sys.stdout.buffer)
     app = App(sup, auth, CONFIG_DIR, share_url_default=SHARE_URL)
 
     problem = config_dir_problem(CONFIG_DIR)

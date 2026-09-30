@@ -54,7 +54,7 @@ import io.delta.sharing.server.model.{
   TemporaryCredentials
 }
 import io.delta.sharing.server.protocol._
-import io.delta.sharing.server.scality.HealthCheck
+import io.delta.sharing.server.scality.{AccessAudit, HealthCheck}
 
 object ErrorCode {
   val UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
@@ -839,7 +839,7 @@ object DeltaSharingService {
           }
         }
       }
-      if (serverConfig.getAuthorization != null) {
+      val authorize = if (serverConfig.getAuthorization != null) {
         // Authorization is set. Set up the authorization using the token in the server config.
         val authServiceBuilder =
           AuthService.builder.addOAuth2((_: ServiceRequestContext, token: OAuth2Token) => {
@@ -849,8 +849,16 @@ object DeltaSharingService {
               serverConfig.getAuthorization.getBearerToken.getBytes(UTF_8))
             CompletableFuture.completedFuture(authorized)
           })
-        builder.decorator(HealthCheck.exemptFrom(authServiceBuilder.newDecorator))
+        Some(HealthCheck.exemptFrom(authServiceBuilder.newDecorator))
+      } else {
+        None
       }
+      // Scality fork: audit every protocol request, refusals included, around the
+      // authorization check. See scality/AccessAudit.scala.
+      builder.decorator(AccessAudit.decorator(
+        serverConfig.endpoint,
+        Option(serverConfig.getAuthorization).map(_.getBearerToken),
+        authorize))
       builder.build()
     }
     server.start().get()

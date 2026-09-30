@@ -193,6 +193,28 @@ done
 grep -q 'redacted' "$WORK/bundle/core-site.xml" || fail "bundle core-site.xml is not masked"
 echo "support bundle: $(ls "$WORK/bundle" | wc -l | tr -d ' ') files, secrets masked"
 
+log "container log: the server's JSON lines and audit events, and no secret"
+docker logs "dsci-setup-$$" > "$WORK/container.log" 2>&1
+python3 - "$WORK/container.log" <<'PYLOG' || fail "container log check failed"
+import json, sys
+lines = [l for l in open(sys.argv[1]) if l.startswith("{")]
+events = [json.loads(l) for l in lines]
+audit = [e for e in events if e.get("type") == "audit"]
+assert audit, "no audit event in the container log"
+queried = [e for e in audit if e["action"] == "table.query" and e["result"] == "success"]
+assert queried, "no successful table.query audit event"
+e = queried[0]
+for field in ("time", "principal", "sourceIp", "action", "resource", "result", "requestId"):
+    assert e.get(field) not in (None, ""), "audit event lacks %s: %s" % (field, e)
+assert e["principal"].startswith("recipient:"), e["principal"]
+print("container log: %d JSON lines, %d audit events, e.g. %s %s %s"
+      % (len(events), len(audit), e["action"], e["resource"], e["result"]))
+PYLOG
+for s in "$SECRET_KEY" "$ACCESS_KEY" "$tok"; do
+  grep -qF "$s" "$WORK/container.log" && fail "container log leaks a secret"
+done
+echo "container log: no secret"
+
 log "restart: the server resumes from /config and the state is never_verified"
 docker restart "dsci-setup-$$" >/dev/null; wait_page; login
 wait_state never_verified 60

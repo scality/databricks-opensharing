@@ -253,13 +253,24 @@ lazy val server = (project in file("server")) enablePlugins(JavaAppPackaging) se
       ExclusionRule("org.json4s"),
       ExclusionRule("com.google.guava", "guava")
     ),
-    "org.slf4j" % "slf4j-api" % "1.6.1",
-    "org.slf4j" % "slf4j-simple" % "1.6.1",
+    // Scality fork: one logging backend. slf4j binds to reload4j (the maintained log4j
+    // 1.x line, which Spark and Hadoop call directly), and conf/log4j.properties selects
+    // scality.JsonLayout — one JSON object per line. The other two bindings and log4j
+    // 1.2.17 are excluded below.
+    "org.slf4j" % "slf4j-api" % "1.7.36",
+    "org.slf4j" % "slf4j-reload4j" % "1.7.36",
+    "ch.qos.reload4j" % "reload4j" % "1.2.25",
     "net.sourceforge.argparse4j" % "argparse4j" % "0.9.0",
 
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
     "org.bouncycastle" % "bcprov-jdk15on" % "1.70" % "test",
     "org.bouncycastle" % "bcpkix-jdk15on" % "1.70" % "test"
+  ),
+  // Scality fork: see the logging note in libraryDependencies.
+  excludeDependencies ++= Seq(
+    ExclusionRule("log4j", "log4j"),
+    ExclusionRule("org.slf4j", "slf4j-log4j12"),
+    ExclusionRule("org.slf4j", "slf4j-simple")
   ),
   Compile / PB.targets := Seq(
     scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"

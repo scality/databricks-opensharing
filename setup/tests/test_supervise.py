@@ -410,5 +410,58 @@ class TestRunningToctou(unittest.TestCase):
             "races a concurrent stop()")
 
 
+
+class TestOutputMirror(unittest.TestCase):
+    """The child's output reaches server.log and, redacted, the mirror stream."""
+
+    def setUp(self):
+        write_patcher = mock.patch("render.write_config", side_effect=_fake_write_config)
+        self.addCleanup(write_patcher.stop)
+        write_patcher.start()
+        tls_patcher = mock.patch("tls.java_tool_options", return_value=None)
+        self.addCleanup(tls_patcher.stop)
+        tls_patcher.start()
+
+    def test_every_line_reaches_the_log_and_the_mirror(self):
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            mirror = io.BytesIO()
+            launcher = ["bash", "-c", 'echo \'{"level":"INFO"}\'; echo second >&2; sleep 60']
+            s = Supervisor(d, launcher, {}, mirror=mirror)
+            self.addCleanup(s.stop)
+            self.assertTrue(s.apply(CFG, "tok1")["ok"])
+            s.stop()
+            log = open(os.path.join(d, "server.log"), "rb").read()
+            self.assertIn(b'{"level":"INFO"}\n', log)
+            self.assertIn(b"second\n", log)
+            self.assertEqual(mirror.getvalue(), b'{"level":"INFO"}\nsecond\n')
+
+    def test_the_mirror_never_carries_a_secret(self):
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            mirror = io.BytesIO()
+            token = "mirror-token-must-not-leak"
+            launcher = ["bash", "-c", "echo 'bearerToken: %s key SK id AK'; exit 1" % token]
+            s = Supervisor(d, launcher, {}, mirror=mirror)
+            self.addCleanup(s.stop)
+            self.assertFalse(s.apply(CFG, token)["ok"])
+            s.stop()
+            out = mirror.getvalue()
+            self.assertIn("«redacted»".encode(), out)
+            for secret in (token, "SK", "AK"):
+                self.assertNotIn(secret.encode(), out)
+            # server.log keeps the raw line; it is 0600 and redacted on the way out.
+            self.assertIn(token.encode(), open(os.path.join(d, "server.log"), "rb").read())
+
+    def test_a_log_tail_after_an_immediate_exit_has_the_last_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            launcher = ["bash", "-c", "echo 'the reason it exited'; exit 1"]
+            s = Supervisor(d, launcher, {})
+            self.addCleanup(s.stop)
+            r = s.apply(CFG, "tok1")
+            self.assertFalse(r["ok"])
+            self.assertIn("the reason it exited", r["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

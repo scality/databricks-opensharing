@@ -26,7 +26,7 @@ release is `v1.4.1-scality.4`.
 | Presigned URLs are time-bounded, and the signature is load-bearing | **Tested** — the same object fetched with the query string stripped returns 403 |
 | A recipient cannot resolve beyond its own share | **Tested** — unknown share and unknown table both 404 |
 | An Iceberg table served alongside a Delta one, via Apache XTable | **Tested** — ARTESCA 4.3 |
-| Access is auditable | **Tested** — ARTESCA 4.3, at the reverse proxy in front of the server, which records grants, refusals and out-of-scope requests alike. **The server itself writes no access log** — see "Where the audit trail is" below before relying on this |
+| Access is auditable | **Tested** — the server writes one JSON audit event per protocol request, refusals included (locally, on the image built from this branch, and in `setup/ci/integration.sh`); the reverse proxy in front of it records the same on ARTESCA 4.3. The object fetches reach only the S3 endpoint — see "Where the audit trail is" below |
 | The **reference client** reads the share end to end | **Tested** — the Linux Foundation `delta-sharing` client v1.4.2, against Scality RING and ARTESCA: profile → REST → presigned URL → Parquet → DataFrame |
 | End-to-end `SELECT` from a Databricks Serverless warehouse | **Not done** |
 
@@ -36,37 +36,61 @@ fetches the same object with the signature removed and requires a 403.
 
 ## Where the audit trail is
 
-Plan for this before a deployment needs to answer "who read what, and who was refused",
-because the server is not the place to look.
+**The server writes one audit event per request to the share protocol**, refusals
+included, as a JSON line on stdout. Every other log line is JSON too, one object per line
+(`time`, `level`, `logger`, `thread`, `message`, and `exception` for a stack trace), so a
+log collector needs no parser.
 
-**The server writes no access log.** Its stdout carries startup banners, Delta-kernel
-internals and stack traces. A request bearing a wrong bearer token is rejected with a 401
-and leaves no entry — measured on ARTESCA 4.3, where two authorised requests plus one
-rejected request produced 170 log lines, all of them kernel checkpoint output.
+An audit event is on the logger `io.delta.sharing.audit`:
 
-**Put the audit trail at the reverse proxy**, which every request crosses: the share
-protocol and the presigned-object fetches both do, so one log covers both. An nginx access
-log in the `upstreaminfo` format records client IP, timestamp, method and path, status,
-byte counts, upstream and a request id — enough to reconstruct the authorisation decisions,
-including the refusals. Verified on ARTESCA 4.3: authorised queries as 200, wrong-token
-requests as 401, unknown share or table as 404, signed object fetches as 200/206, and a
-fetch with the signature stripped as 403.
+```json
+{"time":"2026-09-30T22:54:07.097Z","level":"INFO","logger":"io.delta.sharing.audit","thread":"armeria-common-worker-nio-2-4","type":"audit","principal":"recipient:57c69531b610","sourceIp":"192.168.215.1","action":"table.query","resource":"s/c/t","share":"s","schema":"c","table":"t","method":"POST","path":"/delta-sharing/shares/s/schemas/c/tables/t/query","requestId":"a34c615453433301","status":404,"result":"not_found","durationMs":34,"message":"table.query not_found"}
+```
 
-Two things that waste time when reading it. The container's `/var/log/nginx/access.log` is
-usually a symlink to `/dev/stdout`, so read it from the container's log stream rather than
-by exec-ing a `grep` at that path, which blocks on the pipe. And `upstreaminfo` carries no
-`Host` field, so filtering by hostname matches nothing — filter on the upstream name or the
-request path.
+| Field | Meaning |
+| --- | --- |
+| `time` | when the request arrived (ISO-8601, UTC) |
+| `principal` | `recipient:<first 12 hex of SHA-256 of the token>` for the configured bearer token; `invalid-token`, `anonymous` (no token) or `unauthenticated` (no authorization configured). The token itself is never logged. |
+| `sourceIp`, `forwardedFor` | the peer address; the `X-Forwarded-For` header as received, when present (untrusted: whoever connects sets it) |
+| `action` | `share.list`, `share.get`, `schema.list`, `table.list`, `table.list_all`, `table.version`, `table.metadata`, `table.query`, `table.query_status`, `table.changes`, `table.credentials`, or `unknown` |
+| `resource`, `share`, `schema`, `table` | the names the path carries |
+| `status`, `result` | the HTTP status, and `success`, `denied` (401/403), `not_found`, `rejected` (other 4xx) or `error` |
+| `requestId` | the incoming `X-Request-Id` when it is well-formed (an ingress-nginx access log carries the same id), the server's own id otherwise |
 
-If the object store's own access log is wanted as a second layer, enable it explicitly:
-Scality CloudServer ships its `ServerAccessLogger` disabled.
+`GET /healthz` is not audited. Verified locally on the image built from this branch
+(2026-10-01): an unauthenticated, an authorised and a table-query request produced three
+events with `denied`, `success` and `not_found`, every one of 56 log lines parsed as JSON,
+and the token appeared in none of them; `setup/ci/integration.sh` asserts the same through
+the setup image, where the server's output reaches the container log with every known
+secret masked.
+
+**What the server does not record: the object fetches.** A recipient reads Parquet from
+the presigned URLs directly on the S3 endpoint, so those requests never reach the
+server. The `table.query` event records which files were signed for whom; the fetches are
+in the S3 endpoint's own access log, or at a reverse proxy in front of it.
+
+**A reverse proxy in front of the server is a second layer, not a requirement.** An nginx
+access log in the `upstreaminfo` format records client IP, timestamp, method and path,
+status, byte counts, upstream and a request id. Verified on ARTESCA 4.3: authorised
+queries as 200, wrong-token requests as 401, unknown share or table as 404, signed object
+fetches as 200/206, and a fetch with the signature stripped as 403. Two things that waste
+time when reading it: the container's `/var/log/nginx/access.log` is usually a symlink to
+`/dev/stdout`, so read it from the container's log stream rather than by exec-ing a `grep`
+at that path, which blocks on the pipe; and `upstreaminfo` carries no `Host` field, so
+filter on the upstream name or the request path.
+
+If the object store's own access log is wanted, enable it explicitly: Scality CloudServer
+ships its `ServerAccessLogger` disabled.
+
+**Levels and format.** The packaged `conf/log4j.properties` sends everything at `INFO` to
+stdout through `io.delta.sharing.server.scality.JsonLayout`. To change it, mount another
+file and point the JVM at it:
+`JAVA_TOOL_OPTIONS=-Dlog4j.configuration=file:/config/log4j.properties`.
 
 For a support case rather than an audit, the server-side record is the setup page's
 **support bundle** — the rendered configuration, the whole server log and the last check
 results in one archive, with the S3 keys and the bearer token masked before it is written
 (see "What to send when something fails" in [`setup/README.md`](../../setup/README.md)).
-It describes what this deployment is and what it did; it is not an access log and does not
-answer "who read what".
 
 ## The four things that are each a silent 403
 
@@ -315,8 +339,7 @@ prove: [`setup/README.md`](../../setup/README.md).
 
 It also exposes `GET /metrics` on the page port in Prometheus text format — state, table
 count, endpoint mode and the last verdict per check, carrying no secret, token or table
-name — so the deployment's health reaches a monitoring system even though the server
-writes no access log; see
+name — so the deployment's health reaches a monitoring system; see
 [the Metrics section](../../setup/README.md#metrics).
 
 ## Runtime: user, health endpoints, Kubernetes
@@ -396,8 +419,8 @@ Databricks-side test is scheduled:
    Otherwise the zenko-operator stands up a competing ingress whose internal CA certificate
    wins nginx's oldest-ingress-wins selection, and the recipient fails with a PKIX error
    even though the public certificate exists.
-5. **A reverse proxy with an access log in front of the share server** — the audit trail
-   (above) lives there, not in the server.
+5. **A log collector reading the server's stdout** — the audit events (above) are there.
+   A reverse proxy with an access log in front of the share server is a second layer.
 
 ## Writing a table to share
 

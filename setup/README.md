@@ -156,7 +156,7 @@ restart:
 | `setup.json` | Everything the operator entered except the secret key — read back on restart so the form is not empty over a running server. Carries no credential. |
 | `ca.pem` | The uploaded CA certificate, present only in private-CA mode. |
 | `truststore.jks` | The Java truststore built from `ca.pem`, present only in private-CA mode. |
-| `server.log` | The sharing server's own stdout/stderr, appended across restarts. Mode `0600`, since a startup failure can echo the configuration it failed to parse. |
+| `server.log` | The sharing server's own stdout/stderr, appended across restarts. Mode `0600`, since a startup failure can echo the configuration it failed to parse. The same lines also go to the container's stdout — the server's JSON log and its audit events, for a log collector — with the S3 keys and the bearer token masked there. |
 
 On a container restart the page reads `core-site.xml` and
 `delta-sharing-server.yaml` back — not `setup.json` alone — and resumes the
