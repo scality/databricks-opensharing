@@ -475,5 +475,102 @@ class TestMetricsRoute(HandlerCase):
             self.assertNotIn(forbidden.encode(), body)
 
 
+
+class TestProbeRoutes(HandlerCase):
+    """/healthz and /readyz: what an orchestrator probes, with no session."""
+
+    def test_healthz_needs_no_session(self):
+        status, msg, body = self.request("GET", "/healthz")
+        self.assertEqual((status, body), (200, b"ok\n"))
+        self.assertTrue(msg.get("Content-Type").startswith("text/plain"))
+
+    def test_readyz_is_503_while_nothing_is_serving(self):
+        status, _, body = self.request("GET", "/readyz")
+        self.assertEqual(status, 503, body)
+        doc = json.loads(body)
+        self.assertFalse(doc["ready"])
+        self.assertEqual(doc["state"], UNCONFIGURED)
+
+    def test_readyz_is_200_once_the_server_answers(self):
+        self.sup.ok = True
+        status, _, body = self.request("GET", "/readyz")
+        self.assertEqual(status, 200, body)
+        self.assertTrue(json.loads(body)["ready"])
+
+    def test_readyz_carries_no_secret(self):
+        self.configure(self.cookie())
+        self.sup.ok = True
+        _, _, body = self.request("GET", "/readyz")
+        for forbidden in (CFG["secret_key"], CFG["access_key"],
+                          CFG["tables"][0]["table"], CFG["s3_endpoint"], CFG["bucket"]):
+            self.assertNotIn(forbidden.encode(), body)
+
+
+class TestReadinessProbe(unittest.TestCase):
+    """App.readiness against a server that is up but does not answer /healthz."""
+
+    def test_a_running_server_that_does_not_answer_is_not_ready(self):
+        def refusing(url, timeout=None, context=None):
+            raise ConnectionRefusedError("nothing listening")
+        sup = FakeSupervisor(ok=True)
+        app = App(sup, Auth(), tempfile.mkdtemp(), opener=refusing)
+        code, doc = app.readiness()
+        self.assertEqual(code, 503)
+        self.assertIn("ConnectionRefusedError", doc["reason"])
+
+    def test_the_probe_targets_the_server_health_path(self):
+        seen = []
+
+        def recording(url, timeout=None, context=None):
+            seen.append(url)
+            from tests.test_app import _Response
+            return _Response()
+        app = App(FakeSupervisor(ok=True), Auth(), tempfile.mkdtemp(), opener=recording,
+                  local_server_url="http://127.0.0.1:9999")
+        self.assertEqual(app.readiness()[0], 200)
+        self.assertEqual(seen, ["http://127.0.0.1:9999/healthz"])
+
+
+@unittest.skipIf(os.getuid() == 0, "root reads every file, so there is nothing to detect")
+class TestConfigOwnership(unittest.TestCase):
+    """A /config left behind by an image that ran as root."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+
+    def test_a_usable_directory_raises_no_problem(self):
+        render.write_config(CFG, TOKEN, self.dir)
+        self.assertIsNone(entrypoint.config_dir_problem(self.dir))
+
+    def test_an_unreadable_file_is_named_with_the_fix(self):
+        render.write_config(CFG, TOKEN, self.dir)
+        path = os.path.join(self.dir, render.SERVER_YAML_FILE)
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o600)
+        problem = entrypoint.config_dir_problem(self.dir)
+        self.assertIn(render.SERVER_YAML_FILE, problem)
+        self.assertIn("chown", problem)
+
+    def test_a_directory_this_process_cannot_list_is_named_with_the_fix(self):
+        os.chmod(self.dir, 0o500)
+        self.addCleanup(os.chmod, self.dir, 0o700)
+        problem = entrypoint.config_dir_problem(self.dir)
+        self.assertIn("not writable", problem)
+        self.assertIn("chown", problem)
+
+    def test_boot_names_the_permission_problem(self):
+        render.write_config(CFG, TOKEN, self.dir)
+        path = os.path.join(self.dir, render.SERVER_YAML_FILE)
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o600)
+        sup = FakeSupervisor(ok=False)
+        app = App(sup, Auth(), self.dir, opener=offline_opener)
+        found = boot(app, sup, self.dir)
+        self.assertFalse(found["ok"])
+        self.assertIn("chown", found["detail"])
+        self.assertEqual(sup.resumed, [])
+
+
 if __name__ == "__main__":
     unittest.main()

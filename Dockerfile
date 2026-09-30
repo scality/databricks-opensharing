@@ -54,6 +54,12 @@ RUN chmod +x bin/delta-sharing-server && \
 # in the process environment as well as in core-site.xml. Left unset on purpose — supply
 # them at run time; baking credentials into an image layer would publish them.
 
+# Runs as uid/gid 1000 (the base image's unprivileged `ubuntu` user), numeric so a
+# Kubernetes `runAsNonRoot: true` can verify it without a passwd lookup. The server reads
+# the distribution and /config and writes nothing outside /tmp, so no file needs to
+# change owner.
+USER 1000:1000
+
 EXPOSE 8080
 ENTRYPOINT ["bin/delta-sharing-server"]
 CMD ["--config", "/config/delta-sharing-server.yaml"]

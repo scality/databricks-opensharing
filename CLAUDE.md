@@ -75,11 +75,19 @@ one, edit all.
 
 ## What may diverge from upstream
 
-Keep the fork thin. Two things are ours and everything else should stay identical to the upstream tag we track:
+Keep the fork thin. These are ours and everything else should stay identical to the upstream tag we track:
 
 - **The presigner fix.** Upstream's `S3FileSigner` built its presigning client with an empty `S3ClientCreationParameters`, so `fs.s3a.endpoint` never reached it: metadata reads worked while every presigned URL pointed at `s3.amazonaws.com` and the recipient's fetch returned **403**. That is upstream [#753](https://github.com/delta-io/delta-sharing/issues/753); the fix is carried here and offered upstream as [PR #965](https://github.com/delta-io/delta-sharing/pull/965). ⚠ **This is the load-bearing change** — without it the server is unusable against a non-AWS endpoint, and the failure is a 403 at the recipient rather than an error on the server.
 - **The README preamble and `docs/scality/`**, plus the published container image `ghcr.io/scality/databricks-opensharing:<tag>` (the only image on Docker Hub is years old and predates the S3A endpoint handling this depends on).
 - **`setup/` and the second image it builds**, `ghcr.io/scality/databricks-opensharing-setup`. It touches no upstream file — `setup/Dockerfile` builds `FROM` the server image rather than editing it — so a rebase carries `setup/` through unchanged, the same as the docs.
+
+- **`server/src/main/scala/io/delta/sharing/server/scality/`** — what the server needs to
+  run as a product component: `HealthCheck` (unauthenticated `GET /healthz`, the one path
+  exempted from the bearer-token check). Wired into `DeltaSharingService.start` by a
+  marked line or two; the rest of the upstream file is untouched, so a rebase conflicts
+  only there.
+- **`deploy/`, `.grype.yaml`, `.github/`** — reference manifests and the release and
+  supply-chain workflows.
 
 A change that is not one of those belongs upstream, not here.
 

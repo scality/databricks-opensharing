@@ -91,6 +91,33 @@ class App:
             "ca": {"present": bool(ca_hash), "sha256": ca_hash},
         }
 
+    def readiness(self):
+        """(status, body) for `/readyz`: 200 only while the sharing server is up and
+        answers its own `/healthz`, 503 otherwise.
+
+        Ready means "serving", not "verified": a verdict can be stale or a storage
+        blip can fail a check while every recipient request still succeeds, and an
+        orchestrator that pulled a degraded server out of rotation would turn a
+        finding into an outage. The state is in the body for whoever reads it."""
+        state = self.get_status()["state"]
+        if not self.sup.running():
+            return 503, {"ready": False, "state": state,
+                         "reason": "the sharing server is not running"}
+        url = self.local_server_url.rstrip("/") + "/healthz"
+        try:
+            response = self.opener(url, timeout=2)
+            code = getattr(response, "status", None) or response.getcode()
+            if hasattr(response, "close"):
+                response.close()
+        except Exception as e:  # any failure to answer is "not ready", with the cause
+            return 503, {"ready": False, "state": state,
+                         "reason": "the sharing server does not answer %s: %s"
+                                   % (url, e.__class__.__name__)}
+        if code != 200:
+            return 503, {"ready": False, "state": state,
+                         "reason": "the sharing server answered %s with %s" % (url, code)}
+        return 200, {"ready": True, "state": state}
+
     def _public_config(self):
         """The configuration as the page may see it: everything but the secret,
         plus a flag saying whether one is held. The page renders the flag so the

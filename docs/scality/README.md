@@ -319,6 +319,33 @@ name — so the deployment's health reaches a monitoring system even though the 
 writes no access log; see
 [the Metrics section](../../setup/README.md#metrics).
 
+## Runtime: user, health endpoints, Kubernetes
+
+**Both images run as uid/gid 1000**, set numerically (`USER 1000:1000`) so Kubernetes
+`runAsNonRoot: true` can verify it. The server image writes nothing outside `/tmp`; the
+setup image writes only `/config`, which it creates owned by uid 1000.
+
+**`GET /healthz` on the server port answers `200 ok` with no token.** It is the one path
+the bearer-token check exempts, matched exactly; it says nothing about shares, tables or
+configuration, and every other path, unknown ones included, still answers 401 without the
+token. Probe it instead of the TCP port:
+
+```yaml
+livenessProbe:
+  httpGet: {path: /healthz, port: 8080}
+readinessProbe:
+  httpGet: {path: /healthz, port: 8080}
+```
+
+The setup image adds `/healthz` (the setup process answers) and `/readyz` (200 only while
+the sharing server is up and answers its own `/healthz`; 503 with the state otherwise) on
+the page port — see [`setup/README.md`](../../setup/README.md#health-endpoints).
+
+**Reference Kubernetes manifests** for the setup image are in
+[`deploy/kubernetes/`](../../deploy/kubernetes/): non-root security context with every
+capability dropped, HTTP probes, a PersistentVolumeClaim for `/config`, and a Service for
+the share protocol only. Resource figures there are lab values, not a measurement.
+
 ## One server process serves one S3 endpoint
 
 Worth knowing before designing a deployment that fronts more than one store.
@@ -339,7 +366,7 @@ per-bucket configuration in the presigner — would be a welcome contribution.
 | --- | --- | --- |
 | Container | anywhere with a container runtime | The `docker run` in the README. Simplest, and what the published image is for. |
 | Container with the setup page | anywhere with a container runtime | the setup image; renders and verifies the two files below instead of hand-editing them |
-| Kubernetes | alongside ARTESCA on MetalK8s | Both files as a `Secret` mounted at `/config`; expose through the cluster ingress. |
+| Kubernetes | alongside ARTESCA on MetalK8s | The server image with both files as a `Secret` mounted at `/config`, or the setup image with the reference manifests in [`deploy/kubernetes/`](../../deploy/kubernetes/); expose the share protocol through the cluster ingress. |
 | Host service | a RING supervisor or any host with a JDK 17 | For hosts with no container runtime: extract the distribution from the image and run `bin/delta-sharing-server` under systemd. |
 
 The server co-deploys next to the storage, so it is **not tied to a RING or ARTESCA

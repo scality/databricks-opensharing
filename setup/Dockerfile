@@ -18,11 +18,13 @@ ARG SETUP_VERSION=dev
 ENV SETUP_VERSION=${SETUP_VERSION}
 
 # eclipse-temurin:17-jre ships no python3. ca-certificates gives the page the system
-# roots it verifies public endpoints against; keytool comes with the JRE.
+# roots it verifies public endpoints against; keytool comes with the JRE. Root only for
+# the install: the image runs as uid 1000 below.
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /config && chown 1000:1000 /config && chmod 0700 /config
 
 COPY setup/ /opt/setup/
 
@@ -34,6 +36,10 @@ ENV CONFIG_DIR=/config \
 EXPOSE 8080 8088
 
 # /config is a volume so the rendered configuration survives a container replacement.
+# It exists in the image owned by uid 1000, so a new named volume starts with that owner.
 VOLUME ["/config"]
+
+# The page and the server it supervises run as uid/gid 1000, never root.
+USER 1000:1000
 
 ENTRYPOINT ["python3", "/opt/setup/entrypoint.py"]

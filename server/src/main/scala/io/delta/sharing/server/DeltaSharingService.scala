@@ -54,6 +54,7 @@ import io.delta.sharing.server.model.{
   TemporaryCredentials
 }
 import io.delta.sharing.server.protocol._
+import io.delta.sharing.server.scality.HealthCheck
 
 object ErrorCode {
   val UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
@@ -816,6 +817,8 @@ object DeltaSharingService {
         .disableServerHeader()
         .requestTimeout(java.time.Duration.ofSeconds(serverConfig.requestTimeoutSeconds))
         .annotatedService(serverConfig.endpoint, new DeltaSharingService(serverConfig): Any)
+        // Scality fork: unauthenticated liveness endpoint, see scality/HealthCheck.scala.
+        .service(HealthCheck.Path, HealthCheck.service)
       if (serverConfig.ssl == null) {
         builder.http(serverConfig.getPort)
       } else {
@@ -846,7 +849,7 @@ object DeltaSharingService {
               serverConfig.getAuthorization.getBearerToken.getBytes(UTF_8))
             CompletableFuture.completedFuture(authorized)
           })
-        builder.decorator(authServiceBuilder.newDecorator)
+        builder.decorator(HealthCheck.exemptFrom(authServiceBuilder.newDecorator))
       }
       builder.build()
     }

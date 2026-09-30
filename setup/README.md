@@ -222,6 +222,40 @@ scrape_configs:
       - targets: ["127.0.0.1:8088"]
 ```
 
+## Health endpoints
+
+Two probes on the page's port, both answering without a session and carrying nothing a
+scrape of `/metrics` does not:
+
+| Path | Answers 200 when | Otherwise |
+| --- | --- | --- |
+| `/healthz` | the setup process answers | — (no answer at all) |
+| `/readyz` | the sharing server is running **and** answers its own `/healthz` | 503, with `{"ready": false, "state": …, "reason": …}` |
+
+Ready means serving, not verified: a `degraded` deployment still serves every recipient
+request that works, and taking it out of rotation would turn a finding into an outage. An
+unconfigured container is live and not ready.
+
+## Upgrading a `/config` volume written as root
+
+The image runs as uid 1000. A volume written by an image that ran as root holds `0600`
+files owned by root, which uid 1000 can neither read nor rewrite. The container then
+starts, reports a failed start, and prints the fix in its log:
+
+```
+WARNING: /config is not writable by uid 1000. Give the volume to uid 1000 once, …
+```
+
+Change the owner once, as root, against the same volume, then start the new image:
+
+```bash
+docker run --rm -u 0 -v opensharing-config:/config --entrypoint chown \
+  ghcr.io/scality/databricks-opensharing-setup:<release tag> -R 1000:1000 /config
+```
+
+A new named volume needs nothing: it takes the image's `/config`, already owned by
+uid 1000.
+
 ## What the checks prove, and what they do not
 
 Every check — the pre-checks under Check, and the gate suite under Apply/Verify

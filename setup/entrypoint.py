@@ -75,6 +75,33 @@ STATE_COPY = {
 }
 
 
+# The image runs as uid 1000. A /config volume written by an earlier image that ran
+# as root holds 0600 files this process cannot read or replace; the fix is a one-off
+# change of owner, run as root against the same volume.
+OWNERSHIP_FIX = ("Give the volume to uid 1000 once, e.g. `docker run --rm -u 0 -v "
+                 "<volume>:/config --entrypoint chown <this image> -R 1000:1000 /config`")
+
+
+def config_dir_problem(config_dir):
+    """A sentence saying why this process cannot manage `config_dir`, or None.
+
+    Checked at start so the failure is named in the log before an operator presses
+    Apply and meets a bare permission error."""
+    if not os.path.isdir(config_dir):
+        return None
+    if not os.access(config_dir, os.R_OK | os.W_OK | os.X_OK):
+        return "%s is not writable by uid %d. %s" % (config_dir, os.getuid(), OWNERSHIP_FIX)
+    unreadable = []
+    for name in sorted(os.listdir(config_dir)):
+        path = os.path.join(config_dir, name)
+        if os.path.isfile(path) and not os.access(path, os.R_OK | os.W_OK):
+            unreadable.append(name)
+    if unreadable:
+        return ("%s holds files uid %d cannot read or rewrite (%s). %s"
+                % (config_dir, os.getuid(), ", ".join(unreadable), OWNERSHIP_FIX))
+    return None
+
+
 def boot(app, sup, config_dir):
     """Adopt a deployment that is already on disk, or report that there is none.
 
@@ -86,6 +113,11 @@ def boot(app, sup, config_dir):
     """
     try:
         restored = persist.reconstruct(config_dir)
+    except PermissionError as e:
+        app._start_failed = True
+        return {"ok": False, "bucket": "", "tables": 0,
+                "detail": "a configuration is present but this process (uid %d) may "
+                          "not read it: %s. %s" % (os.getuid(), e, OWNERSHIP_FIX)}
     except Exception as e:
         app._start_failed = True
         return {"ok": False, "bucket": "", "tables": 0,
@@ -211,6 +243,13 @@ def make_handler(app, auth, static_dir=STATIC_DIR):
                 status = app.get_status()
                 status["copy"] = STATE_COPY[status["state"]]
                 return self._send(200, json.dumps(status))
+            # Probes for an orchestrator. Neither needs a session and neither says
+            # anything a scrape of /metrics does not: /healthz is "this process
+            # answers", /readyz is "the sharing server is up and answers".
+            if path == "/healthz":
+                return self._send(200, "ok\n", "text/plain; charset=utf-8")
+            if path == "/readyz":
+                return self._send_pair(app.readiness())
             if path == "/metrics":
                 return self._send(200, metrics.render(app.get_status()),
                                   "text/plain; version=0.0.4; charset=utf-8")
@@ -268,6 +307,9 @@ def main():
     sup = Supervisor(CONFIG_DIR, LAUNCHER, {})
     app = App(sup, auth, CONFIG_DIR, share_url_default=SHARE_URL)
 
+    problem = config_dir_problem(CONFIG_DIR)
+    if problem:
+        print("WARNING: %s" % problem, flush=True)
     found = boot(app, sup, CONFIG_DIR)
     if found is None:
         print("No configuration on disk: starting unconfigured.", flush=True)
