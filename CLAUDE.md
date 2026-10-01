@@ -13,15 +13,23 @@ subagents (Agent tool), which return a summary rather than file dumps.
 - **Delegate by default** whenever a task means reading several files, sweeping the
   codebase, implementing, running long gates, or reviewing. Work directly only for a
   single-fact lookup or a one-line edit where the file and change are already known.
-- **Pick the model by complexity — Sonnet is the floor, never Haiku:**
-  - **Sonnet** — mechanical work whose target is already stated: searches, enumeration,
-    edits the tests pin, running gates, doc updates.
-  - **Opus** — judgement: design, debugging, reviews, anything that moves a figure or
-    classifies.
-  - **Fable** — sparingly, it is the most expensive: only the hardest calls, where
-    Opus is genuinely not enough — adversarial verification of a change that matters,
-    synthesis across many results, security-sensitive or schema/production-affecting
-    changes. One Fable pass at the end beats Fable on every step.
+- **Pick the model and the effort by task — Sonnet is the floor, never Haiku.** Effort
+  matters as much as the model on the current generation; set both. On Stéphane's laptop
+  the agent types in `~/.claude/agents/` fix both — choose the type, not a `model`:
+  - **`mechanic`** — Sonnet 5.5, effort `medium`: work whose target is already stated —
+    searches, enumeration, edits the tests pin, running gates, doc updates.
+  - **`researcher`** — Opus 5.5, effort `high`: reading across repos and sources and
+    writing findings with citations.
+  - **`builder`** — Opus 5.5, effort `xhigh`: design, implementation, debugging,
+    anything that moves a figure or classifies.
+  - **`verifier`** — Fable 5.1, effort `xhigh`, no write tools: once per deliverable, at
+    the end — adversarial review, cross-checking drafts, synthesis across many results,
+    security-sensitive or schema/production-affecting changes. One Fable pass at the end
+    beats Fable on every step. Measured 2026-10-01 on the ISV handler work: two Fable
+    passes found 13 contradictions across seven Opus drafts and 8 defects the Opus
+    builders had missed, one of them a check that could never fail.
+  - Raise effort before changing model, and judge cost per finished task, not per
+    request: a cheaper agent that needs a rework pass costs more.
 - **A subagent does the work itself and never spawns another subagent.** Delegation is
   the orchestrating session's job; one level deep is the whole design. If a subagent
   judges the task needs a stronger model, it says so and stops — it does not launch
