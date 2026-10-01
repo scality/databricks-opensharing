@@ -14,7 +14,7 @@ metadata:
   displayName: Databricks OpenSharing (Delta Sharing server)
   vendor: Databricks
   version: 1.4.1-scality.5
-  owner: aliaksandr.hilevich@scality.com
+  owner: isv-team@scality.com
   description: >-
     Delta Sharing server serving Delta tables stored on Scality S3 to Databricks
     recipients, with an operator setup page that renders, starts and verifies it.
