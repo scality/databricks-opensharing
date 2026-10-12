@@ -58,6 +58,11 @@ RUN chmod +x bin/delta-sharing-server && \
 # Kubernetes `runAsNonRoot: true` can verify it without a passwd lookup. The server reads
 # the distribution and /config and writes nothing outside /tmp, so no file needs to
 # change owner.
+# Canonical's pebble, shipped in the base image, is built with Go 1.26.7 (GO-2026-6604,
+# GO-2026-6612) and nothing here runs it. Remove when eclipse-temurin ships pebble built
+# with Go >= 1.26.9.
+RUN rm -f /usr/bin/pebble
+
 USER 1000:1000
 
 # The port is whatever `port:` says in the server YAML; 9480 is the documented default
