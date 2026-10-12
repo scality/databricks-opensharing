@@ -34,7 +34,7 @@ RUN sbt --batch "server/universal:packageBin" && \
 # `jar` is used rather than `unzip`, which the sbtscala image does not ship.
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM eclipse-temurin:17-jre@sha256:34d6aaf0fa4ef553c470234ec23c32c7d5c0f370c2bd4b0bf8a16838052d85f0
+FROM eclipse-temurin:17-jre@sha256:207ecae0b2b104dfc6dfa763d1e9cd2041cb344800a180e24cb1a28ed533ff90
 
 WORKDIR /opt/delta-sharing-server
 
