@@ -13,7 +13,7 @@ subagents (Agent tool), which return a summary rather than file dumps.
 - **Delegate by default** whenever a task means reading several files, sweeping the
   codebase, implementing, running long gates, or reviewing. Work directly only for a
   single-fact lookup or a one-line edit where the file and change are already known.
-- **Pick the model and the effort by task — Sonnet is the floor, never Haiku.** Effort
+- **Pick the model and the effort by task.** Effort
   matters as much as the model on the current generation; set both. On Stéphane's laptop
   the agent types in `~/.claude/agents/` fix both — choose the type, not a `model`:
   - **`mechanic`** — Sonnet 5.5, effort `medium`: work whose target is already stated —
