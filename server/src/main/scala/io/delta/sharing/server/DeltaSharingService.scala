@@ -45,7 +45,7 @@ import org.slf4j.LoggerFactory
 import scalapb.json4s.Printer
 
 import io.delta.sharing.server.common.JsonUtils
-import io.delta.sharing.server.config.ServerConfig
+import io.delta.sharing.server.config.{ServerConfig, TableConfig}
 import io.delta.sharing.server.credential.{CredentialContext, Privilege, StorageCredentialVendor}
 import io.delta.sharing.server.model.{
   GenerateTemporaryTableCredentialRequest,
@@ -54,7 +54,13 @@ import io.delta.sharing.server.model.{
   TemporaryCredentials
 }
 import io.delta.sharing.server.protocol._
-import io.delta.sharing.server.scality.{AccessAudit, HealthCheck}
+import io.delta.sharing.server.scality.{
+  AccessAudit,
+  HealthCheck,
+  ScalitySts,
+  ScalityStsCredentialVendor,
+  ScalityStsSettings
+}
 
 object ErrorCode {
   val UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
@@ -188,8 +194,29 @@ class DeltaSharingServiceExceptionHandler extends ExceptionHandlerFunction {
 }
 
 @ExceptionHandler(classOf[DeltaSharingServiceExceptionHandler])
-class DeltaSharingService(serverConfig: ServerConfig) {
+class DeltaSharingService(
+    serverConfig: ServerConfig,
+    // Scality fork: temporary credentials from a Scality STS, see scality/ScalitySts.scala.
+    scalitySts: Option[ScalityStsSettings] = ScalitySts.fromHadoop(new Configuration())) {
   import DeltaSharingService._
+
+  // Scality fork: built once, so every request reuses one STS client.
+  private val scalityStsVendor = scalitySts.map(new ScalityStsCredentialVendor(_))
+
+  // Scality fork: the access modes a table advertises; None keeps upstream's response.
+  private def scalityAccessModes(share: String, schema: String, tableConfig: TableConfig) =
+    scalitySts.flatMap(_.accessModesFor(share, schema, tableConfig))
+
+  private def scalityDecorate(share: String, t: Table): Table = {
+    if (scalitySts.isEmpty) {
+      t
+    } else {
+      val schema = t.getSchema
+      val tableConfig = sharedTableManager.getTable(share, schema, t.getName)
+      ScalitySts.decorateTable(
+        t, tableConfig.getLocation, scalityAccessModes(share, schema, tableConfig))
+    }
+  }
 
   private val rand = new scala.util.Random()
 
@@ -256,7 +283,7 @@ class DeltaSharingService(serverConfig: ServerConfig) {
       @Param("pageToken") @Nullable pageToken: String): ListTablesResponse = processRequest {
     val (tables, nextPageToken) =
       sharedTableManager.listTables(share, schema, Option(pageToken), Some(maxResults))
-    ListTablesResponse(tables, nextPageToken)
+    ListTablesResponse(tables.map(scalityDecorate(share, _)), nextPageToken)
   }
 
   @Get("/shares/{share}/all-tables")
@@ -267,7 +294,7 @@ class DeltaSharingService(serverConfig: ServerConfig) {
       @Param("pageToken") @Nullable pageToken: String): ListAllTablesResponse = processRequest {
     val (tables, nextPageToken) =
       sharedTableManager.listAllTables(share, Option(pageToken), Some(maxResults))
-    ListAllTablesResponse(tables, nextPageToken)
+    ListAllTablesResponse(tables.map(scalityDecorate(share, _)), nextPageToken)
   }
 
   private def createHeadersBuilderForTableVersion(version: Long): ResponseHeadersBuilder = {
@@ -360,8 +387,11 @@ class DeltaSharingService(serverConfig: ServerConfig) {
       clientReaderFeaturesSet = clientReaderFeaturesSet,
       includeEndStreamAction = false,
       fileIdHash = fileIdHash)
+    // Scality fork: advertise `dir` on the metadata line when an STS role covers the table.
+    val actions = ScalitySts.decorateMetadataActions(
+      queryResult.actions, tableConfig.getLocation, scalityAccessModes(share, schema, tableConfig))
     streamingOutput(
-      Some(queryResult.version), queryResult.responseFormat, queryResult.actions,
+      Some(queryResult.version), queryResult.responseFormat, actions,
       requestFileIdHash = fileIdHash)
   }
 
@@ -702,13 +732,19 @@ class DeltaSharingService(serverConfig: ServerConfig) {
           "location.")
       }
     }
-    val conf = new Configuration()
-    val vendor = new StorageCredentialVendor(conf)
-    val result = vendor.vendCredential(
-      uri,
-      Set(Privilege.SELECT),
-      serverConfig.temporaryCredentialValiditySeconds
-    )
+    val result = scalityStsVendor match {
+      // Scality fork: AssumeRole on the table's role at the configured Scality STS.
+      case Some(vendor) =>
+        vendor.vend(share, schema, table, uri, serverConfig.temporaryCredentialValiditySeconds)
+      case None =>
+        val conf = new Configuration()
+        val vendor = new StorageCredentialVendor(conf)
+        vendor.vendCredential(
+          uri,
+          Set(Privilege.SELECT),
+          serverConfig.temporaryCredentialValiditySeconds
+        )
+    }
     HttpResponse.of(
       HttpStatus.OK,
       MediaType.JSON_UTF_8,

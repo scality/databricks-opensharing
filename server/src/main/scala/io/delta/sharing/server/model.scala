@@ -96,7 +96,10 @@ case class Metadata(
     schemaString: String = null,
     configuration: Map[String, String] = Map.empty,
     partitionColumns: Seq[String] = Nil,
-    version: java.lang.Long = null) extends Action {
+    version: java.lang.Long = null,
+    // Scality fork: set only when the table supports `dir` access (scality/ScalitySts.scala).
+    location: String = null,
+    accessModes: Seq[String] = null) extends Action {
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }
@@ -274,7 +277,10 @@ case class DeltaResponseFileAction(
  */
 case class DeltaResponseMetadata(
     version: java.lang.Long = null,
-    deltaMetadata: DeltaMetadataCopy) extends DeltaResponseAction {
+    deltaMetadata: DeltaMetadataCopy,
+    // Scality fork: set only when the table supports `dir` access (scality/ScalitySts.scala).
+    location: String = null,
+    accessModes: Seq[String] = null) extends DeltaResponseAction {
   override def wrap: DeltaResponseSingleAction = DeltaResponseSingleAction(metaData = this)
 }
 

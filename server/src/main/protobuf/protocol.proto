@@ -41,6 +41,9 @@ message Table {
     optional string schema = 2;
     optional string share = 3;
     optional string id = 4;
+    // Scality fork: set only when the table supports `dir` access (scality/ScalitySts.scala).
+    optional string location = 100;
+    repeated string accessModes = 101;
 }
 
 message QueryTableRequest {
