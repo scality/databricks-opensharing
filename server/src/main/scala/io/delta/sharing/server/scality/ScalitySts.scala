@@ -26,7 +26,7 @@ import com.amazonaws.services.securitytoken.model.AssumeRoleRequest
 import org.apache.hadoop.conf.Configuration
 
 import io.delta.sharing.server.DeltaSharingIllegalArgumentException
-import io.delta.sharing.server.config.TableConfig
+import io.delta.sharing.server.config.{ServerConfig, TableConfig}
 import io.delta.sharing.server.credential.StorageScheme
 import io.delta.sharing.server.credential.aws.AwsPolicyGenerator
 import io.delta.sharing.server.model.{
@@ -61,25 +61,45 @@ case class ScalityStsSettings(
     credentialsProvider: AWSCredentialsProvider) {
 
   /**
-   * The role ARN for a table: the most specific key wins:
-   * `role.<share>.<schema>.<table>`, then `role.<share>.<schema>`, then `role.<share>`.
-   * The server resolves names case-insensitively, so `roles` holds lower-cased keys
-   * (`ScalitySts.fromHadoop`) and the lookup lower-cases its inputs: a request spelled
-   * `Share/Schema/Table` must find the table's own role, never fall back to the share's.
+   * The role ARN for a table, from its CONFIGURED names (a [[CanonicalTable]]), never
+   * from a request's spelling: the server matches request names with `equalsIgnoreCase`,
+   * which folds some characters differently from any lower-casing, so a key built from
+   * the request could miss the table's own role and land on a broader one.
+   *
+   * `role.<share>.<schema>.<table>` wins. When the share has any table-level key and this
+   * table has none, there is no role (fail closed): the operator scoped that share per
+   * table. Otherwise `role.<share>.<schema>`, then `role.<share>`.
    */
-  def roleFor(share: String, schema: String, table: String): Option[String] = {
-    val (sh, sc, t) = (ScalitySts.norm(share), ScalitySts.norm(schema), ScalitySts.norm(table))
-    Seq(s"$sh.$sc.$t", s"$sh.$sc", sh).flatMap(roles.get).headOption
+  def roleFor(t: CanonicalTable): Option[String] = {
+    val sh = ScalitySts.norm(t.share)
+    val sc = ScalitySts.norm(t.schema)
+    val tb = ScalitySts.norm(t.table)
+    roles.get(s"$sh.$sc.$tb").orElse {
+      val shareHasTableKeys = roles.keys.exists { k =>
+        k.startsWith(sh + ".") && k.substring(sh.length + 1).contains(".")
+      }
+      if (shareHasTableKeys) None else Seq(s"$sh.$sc", sh).flatMap(roles.get).headOption
+    }
   }
 
   /** The access modes to advertise for a table, or None to advertise nothing (upstream). */
-  def accessModesFor(share: String, schema: String, tableConfig: TableConfig): Option[Seq[String]] =
-    if (tableConfig.historyShared && roleFor(share, schema, tableConfig.getName).isDefined) {
+  def accessModesFor(t: CanonicalTable): Option[Seq[String]] =
+    if (t.config.historyShared && roleFor(t).isDefined) {
       Some(ScalitySts.AccessModesUrlAndDir)
     } else {
       None
     }
 }
+
+/**
+ * A table named by its configured share, schema and table names. Only
+ * [[ScalitySts.resolve]] builds one, so a role key is never built from request text.
+ */
+final class CanonicalTable private[scality] (
+    val share: String,
+    val schema: String,
+    val table: String,
+    val config: TableConfig)
 
 object ScalitySts {
   val Prefix = "delta.sharing.scality.sts."
@@ -129,7 +149,25 @@ object ScalitySts {
     }
   }
 
+  /** Applied to configured names and to role keys alike, never to request text. */
   def norm(name: String): String = name.toLowerCase(Locale.ROOT)
+
+  /**
+   * The configured names of the table a request names, matched as `SharedTableManager`
+   * matches them (`equalsIgnoreCase`), or None when no table matches.
+   */
+  def resolve(
+      serverConfig: ServerConfig,
+      share: String,
+      schema: String,
+      table: String): Option[CanonicalTable] = {
+    import scala.collection.JavaConverters._
+    for {
+      sh <- serverConfig.getShares.asScala.find(_.getName.equalsIgnoreCase(share))
+      sc <- sh.getSchemas.asScala.find(_.getName.equalsIgnoreCase(schema))
+      t <- sc.getTables.asScala.find(_.getName.equalsIgnoreCase(table))
+    } yield new CanonicalTable(sh.getName, sc.getName, t.getName, t)
+  }
 
   /**
    * Role keys lower-cased. Two keys that differ only in case would make the role depend
@@ -191,22 +229,21 @@ class ScalityStsCredentialVendor(
 
   /** The AssumeRole request for a table. Never carries PolicyArns. */
   def assumeRoleRequest(
-      share: String,
-      schema: String,
-      table: String,
+      t: CanonicalTable,
       location: URI,
       validitySeconds: Long): AssumeRoleRequest = {
     if (StorageScheme.fromUri(location) != StorageScheme.S3) {
       throw new DeltaSharingIllegalArgumentException(
         s"Temporary table credentials from a Scality STS cover s3a:// locations only: $location")
     }
-    val roleArn = settings.roleFor(share, schema, table).getOrElse {
+    val roleArn = settings.roleFor(t).getOrElse {
       throw new DeltaSharingIllegalArgumentException(
-        s"Temporary table credentials are not configured for table: $share.$schema.$table")
+        s"Temporary table credentials are not configured for table: " +
+          s"${t.share}.${t.schema}.${t.table}")
     }
     val request = new AssumeRoleRequest()
       .withRoleArn(roleArn)
-      .withRoleSessionName(ScalitySts.sessionName(share, table))
+      .withRoleSessionName(ScalitySts.sessionName(t.share, t.table))
       .withDurationSeconds(ScalitySts.durationSeconds(validitySeconds))
     if (settings.sendSessionPolicy) {
       // Opt-in only. RING STS accepts an inline Policy and ignores it: the role is the scope.
@@ -218,13 +255,8 @@ class ScalityStsCredentialVendor(
     request
   }
 
-  def vend(
-      share: String,
-      schema: String,
-      table: String,
-      location: URI,
-      validitySeconds: Long): TemporaryCredentials = {
-    val request = assumeRoleRequest(share, schema, table, location, validitySeconds)
+  def vend(t: CanonicalTable, location: URI, validitySeconds: Long): TemporaryCredentials = {
+    val request = assumeRoleRequest(t, location, validitySeconds)
     val issuedAt = System.currentTimeMillis()
     val c = client.assumeRole(request).getCredentials
     val expirationTime = Option(c.getExpiration).map(_.getTime)

@@ -45,7 +45,7 @@ import org.slf4j.LoggerFactory
 import scalapb.json4s.Printer
 
 import io.delta.sharing.server.common.JsonUtils
-import io.delta.sharing.server.config.{ServerConfig, TableConfig}
+import io.delta.sharing.server.config.ServerConfig
 import io.delta.sharing.server.credential.{CredentialContext, Privilege, StorageCredentialVendor}
 import io.delta.sharing.server.model.{
   GenerateTemporaryTableCredentialRequest,
@@ -204,17 +204,19 @@ class DeltaSharingService(
   private val scalityStsVendor = scalitySts.map(new ScalityStsCredentialVendor(_))
 
   // Scality fork: the access modes a table advertises; None keeps upstream's response.
-  private def scalityAccessModes(share: String, schema: String, tableConfig: TableConfig) =
-    scalitySts.flatMap(_.accessModesFor(share, schema, tableConfig))
+  // Roles are looked up by the table's configured names, never the request's spelling.
+  private def scalityAccessModes(share: String, schema: String, table: String) =
+    scalitySts.flatMap { s =>
+      ScalitySts.resolve(serverConfig, share, schema, table).flatMap(s.accessModesFor)
+    }
 
   private def scalityDecorate(share: String, t: Table): Table = {
     if (scalitySts.isEmpty) {
       t
     } else {
-      val schema = t.getSchema
-      val tableConfig = sharedTableManager.getTable(share, schema, t.getName)
+      val tableConfig = sharedTableManager.getTable(share, t.getSchema, t.getName)
       ScalitySts.decorateTable(
-        t, tableConfig.getLocation, scalityAccessModes(share, schema, tableConfig))
+        t, tableConfig.getLocation, scalityAccessModes(share, t.getSchema, t.getName))
     }
   }
 
@@ -389,7 +391,7 @@ class DeltaSharingService(
       fileIdHash = fileIdHash)
     // Scality fork: advertise `dir` on the metadata line when an STS role covers the table.
     val actions = ScalitySts.decorateMetadataActions(
-      queryResult.actions, tableConfig.getLocation, scalityAccessModes(share, schema, tableConfig))
+      queryResult.actions, tableConfig.getLocation, scalityAccessModes(share, schema, table))
     streamingOutput(
       Some(queryResult.version), queryResult.responseFormat, actions,
       requestFileIdHash = fileIdHash)
@@ -735,7 +737,11 @@ class DeltaSharingService(
     val result = scalityStsVendor match {
       // Scality fork: AssumeRole on the table's role at the configured Scality STS.
       case Some(vendor) =>
-        vendor.vend(share, schema, table, uri, serverConfig.temporaryCredentialValiditySeconds)
+        val canonical = ScalitySts.resolve(serverConfig, share, schema, table).getOrElse(
+          throw new DeltaSharingNoSuchElementException(
+            s"[Share/Schema/Table] '$share/$schema/$table' does not exist, " +
+              "please contact your share provider for further information."))
+        vendor.vend(canonical, uri, serverConfig.temporaryCredentialValiditySeconds)
       case None =>
         val conf = new Configuration()
         val vendor = new StorageCredentialVendor(conf)

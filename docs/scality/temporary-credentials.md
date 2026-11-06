@@ -103,10 +103,18 @@ Example — two shares, one role each:
 </property>
 ```
 
-Role keys match names case-insensitively, as the server resolves shares, schemas and
-tables: a request for `Sales/Q1/Orders` finds `role.sales.q1.orders`, never a broader role.
-Two role keys that differ only in case stop the server at startup. A share, schema or table
-name containing a dot makes these keys ambiguous; avoid dots in names you map.
+The server looks a role up by the table's **configured** share, schema and table names,
+never by the request's spelling: it first finds the table as it always does
+(case-insensitively), then reads the role keys for that table's configured names. Role
+keys are compared lower-cased, and two keys that differ only in case stop the server at
+startup.
+
+**A share with any table-level key is scoped per table.** A table of that share with no
+key of its own gets no role: the credential request is refused (400) and the table does
+not advertise `dir`. It never falls back to the schema or share role.
+
+A share, schema or table name containing a dot makes these keys ambiguous; avoid dots in
+names you map.
 
 ## Manual live test procedure
 
@@ -130,7 +138,8 @@ and their policies, and removes them at the end. Replace every `<…>`.
 4. **Vend.** `POST /shares/share_a/schemas/<schema>/tables/<table>/temporary-table-credentials`
    with body `{}` returns `awsTempCredentials` and an `expirationTime` about one hour out
    (not two: the clamp). The STS access log shows `AssumeRole` on `ds-share-a-read`, with
-   no `PolicyArns` parameter. The same call on the `share_c` table returns 400.
+   no `PolicyArns` parameter. The same call on the `share_c` table returns 400. Spelled
+   `SHARE_A/<SCHEMA>/<TABLE>`, it assumes the same `ds-share-a-read` role.
 5. **Scope.** With those three values as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
    `AWS_SESSION_TOKEN`, against `fs.s3a.endpoint`: listing and reading under
    `<prefix-a>` succeed; reading under `<prefix-b>` is 403; a `PutObject` under

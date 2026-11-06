@@ -89,7 +89,10 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     new AWSStaticCredentialsProvider(new BasicAWSCredentials("TESTKEY", "test-secret"))
 
   private val shareRole = "arn:aws:iam::000000000000:role/share-a-read"
-  private val tableRole = "arn:aws:iam::000000000000:role/share-a-t2-read"
+  private val schemaRole = "arn:aws:iam::000000000000:role/share-a-s2-read"
+  private val shareDRole = "arn:aws:iam::000000000000:role/share-d-read"
+  private val tableRole = "arn:aws:iam::000000000000:role/share-d-ti-read"
+  private val kelvinRole = "arn:aws:iam::000000000000:role/share-d-tk-read"
 
   override def beforeAll(): Unit = sts = new FakeSts
   override def afterAll(): Unit = sts.stop()
@@ -101,12 +104,17 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     c
   }
 
+  // share_a: one role for the share, one for schema s2.
+  // share_d: a share role AND table-level keys, so its unmapped table t6 has no role.
   private def settings(extra: (String, String)*): ScalityStsSettings =
     ScalitySts.fromHadoop(conf(Seq(
       ScalitySts.EndpointKey -> sts.endpoint,
       ScalitySts.RegionKey -> "test-region-1",
       ScalitySts.RolePrefix + "share_a" -> shareRole,
-      ScalitySts.RolePrefix + "share_a.s1.t2" -> tableRole) ++ extra: _*), dummyCreds).get
+      ScalitySts.RolePrefix + "share_a.s2" -> schemaRole,
+      ScalitySts.RolePrefix + "share_d" -> shareDRole,
+      ScalitySts.RolePrefix + "share_d.s1.ti" -> tableRole,
+      ScalitySts.RolePrefix + "Share_D.S1.TK" -> kelvinRole) ++ extra: _*), dummyCreds).get
 
   private def table(name: String, historyShared: Boolean = true): TableConfig =
     TableConfig(name, s"s3a://bucket-a/data/$name", historyShared = historyShared)
@@ -117,14 +125,26 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     sc.setTemporaryCredentialValiditySeconds(7200)
     sc.setShares(java.util.Arrays.asList(
       ShareConfig("share_a", java.util.Arrays.asList(
-        SchemaConfig("s1", java.util.Arrays.asList(table("t1"), table("t2"))))),
+        SchemaConfig("s1", java.util.Arrays.asList(table("t1"), table("t2"))),
+        SchemaConfig("s2", java.util.Arrays.asList(table("t7"))))),
       ShareConfig("share_b", java.util.Arrays.asList(
         SchemaConfig("s1", java.util.Arrays.asList(table("t3"))))),
       ShareConfig("share_c", java.util.Arrays.asList(
-        SchemaConfig("s1", java.util.Arrays.asList(table("t4", historyShared = false)))))))
+        SchemaConfig("s1", java.util.Arrays.asList(table("t4", historyShared = false))))),
+      ShareConfig("share_d", java.util.Arrays.asList(
+        SchemaConfig("s1", java.util.Arrays.asList(table("ti"), table("tk"), table("t6")))))))
     sc.checkConfig()
     sc
   }
+
+  private val DotlessI = 0x131.toChar.toString // equalsIgnoreCase("i") is true
+  private val Kelvin = 0x212A.toChar.toString // equalsIgnoreCase("k") is true
+
+  private def ct(share: String, schema: String, name: String): CanonicalTable =
+    ScalitySts.resolve(serverConfig(), share, schema, name).get
+
+  private def roleOf(share: String, schema: String, name: String): Option[String] =
+    settings().roleFor(ct(share, schema, name))
 
   // configuration
 
@@ -147,39 +167,59 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     assert(!plain.get.sendSessionPolicy)
   }
 
-  test("role selection: the most specific key wins") {
-    val s = settings()
-    assert(s.roleFor("share_a", "s1", "t1").contains(shareRole))
-    assert(s.roleFor("share_a", "s1", "t2").contains(tableRole))
-    assert(s.roleFor("share_b", "s1", "t3").isEmpty)
-    val withSchema = settings(ScalitySts.RolePrefix + "share_a.s1" -> "arn:schema")
-    assert(withSchema.roleFor("share_a", "s1", "t1").contains("arn:schema"))
-    assert(withSchema.roleFor("share_a", "s1", "t2").contains(tableRole))
+  test("role selection: table key, then schema key, then share key") {
+    assert(roleOf("share_a", "s1", "t1").contains(shareRole))
+    assert(roleOf("share_a", "s2", "t7").contains(schemaRole))
+    assert(roleOf("share_d", "s1", "ti").contains(tableRole))
+    assert(roleOf("share_d", "s1", "tk").contains(kelvinRole)) // key written Share_D.S1.TK
+    assert(roleOf("share_b", "s1", "t3").isEmpty)
   }
 
-  test("role lookup ignores case: a mixed-case request gets the table role, not the share's") {
-    val s = settings()
-    assert(s.roleFor("SHARE_A", "S1", "T2").contains(tableRole))
-    assert(s.roleFor("Share_A", "s1", "t2").contains(tableRole))
-    assert(s.roleFor("Share_A", "S1", "T1").contains(shareRole))
-    val mixedKeys = settings(ScalitySts.RolePrefix + "Share_B.S1.T3" -> "arn:t3")
-    assert(mixedKeys.roleFor("share_b", "s1", "t3").contains("arn:t3"))
+  test("a share with table-level keys gives an unmapped table no role (fail closed)") {
+    assert(roleOf("share_d", "s1", "t6").isEmpty)
+    assert(settings().accessModesFor(ct("share_d", "s1", "t6")).isEmpty)
+  }
+
+  test("resolve returns the configured names, whatever the request's spelling") {
+    val c = ScalitySts.resolve(serverConfig(), "SHARE_D", "S1", "T" + DotlessI).get // dotless i
+    assert((c.share, c.schema, c.table) == (("share_d", "s1", "ti")))
+    assert(ScalitySts.resolve(serverConfig(), "share_d", "s1", "nope").isEmpty)
+  }
+
+  test("Unicode case-fold variants get the table role, never the share role") {
+    // equalsIgnoreCase matches dotless i to i (toLowerCase leaves it dotless) and Kelvin to k.
+    assert(roleOf("SHARE_D", "S1", "T" + DotlessI).contains(tableRole))
+    assert(roleOf("share_d", "s1", "t" + Kelvin).contains(kelvinRole))
+    assert(roleOf("Share_D", "S1", "TI").contains(tableRole))
   }
 
   test("role keys that collide after lower-casing refuse to load") {
     val e = intercept[IllegalArgumentException] {
-      settings(ScalitySts.RolePrefix + "SHARE_A.s1.t2" -> "arn:other")
+      settings(ScalitySts.RolePrefix + "SHARE_D.s1.ti" -> "arn:other")
     }
-    assert(e.getMessage.contains("SHARE_A.s1.t2"))
+    assert(e.getMessage.contains("SHARE_D.s1.ti"))
   }
 
-  test("configured service: a mixed-case credential request assumes the table role") {
+  test("configured service: case-fold variants of a request assume the table role") {
     val service = new DeltaSharingService(serverConfig(), Some(settings()))
-    service.generateTemporaryTableCredential(
-      HttpRequest.of(HttpMethod.POST, "/"), "SHARE_A", "S1", "T2",
-      AggregatedHttpRequest.of(HttpMethod.POST, "/")).aggregate().join()
-    assert(sts.calls.size == 1)
-    assert(sts.calls.head.params("RoleArn") == tableRole)
+    val variants = Seq(("SHARE_D", "S1", "T" + DotlessI), ("share_d", "s1", "t" + Kelvin))
+    variants.foreach { case (a, b, c) =>
+      service.generateTemporaryTableCredential(
+        HttpRequest.of(HttpMethod.POST, "/"), a, b, c,
+        AggregatedHttpRequest.of(HttpMethod.POST, "/")).aggregate().join()
+    }
+    assert(sts.calls.map(_.params("RoleArn")) == Seq(tableRole, kelvinRole))
+  }
+
+  test("configured service: an unmapped table of a per-table share is refused, no STS call") {
+    val service = new DeltaSharingService(serverConfig(), Some(settings()))
+    // The service's exception handler turns this into a 400.
+    intercept[DeltaSharingIllegalArgumentException] {
+      service.generateTemporaryTableCredential(
+        HttpRequest.of(HttpMethod.POST, "/"), "share_d", "s1", "t6",
+        AggregatedHttpRequest.of(HttpMethod.POST, "/"))
+    }
+    assert(sts.calls.isEmpty)
   }
 
   test("duration is clamped to 3600 seconds") {
@@ -194,14 +234,14 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
   test("AssumeRole never carries PolicyArns, and no Policy unless opted in") {
     val loc = new URI("s3a://bucket-a/data/t1")
     val req = new ScalityStsCredentialVendor(settings())
-      .assumeRoleRequest("share_a", "s1", "t1", loc, 7200)
+      .assumeRoleRequest(ct("share_a", "s1", "t1"), loc, 7200)
     assert(req.getRoleArn == shareRole)
     assert(req.getDurationSeconds == 3600)
     assert(req.getPolicyArns == null || req.getPolicyArns.isEmpty)
     assert(req.getPolicy == null)
 
     val optIn = new ScalityStsCredentialVendor(settings(ScalitySts.SessionPolicyKey -> "true"))
-      .assumeRoleRequest("share_a", "s1", "t1", loc, 600)
+      .assumeRoleRequest(ct("share_a", "s1", "t1"), loc, 600)
     assert(optIn.getPolicyArns == null || optIn.getPolicyArns.isEmpty)
     assert(optIn.getPolicy.contains("arn:aws:s3:::bucket-a/data/t1/*"))
   }
@@ -209,16 +249,16 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
   test("a table with no role is refused, and so is a non-S3 location") {
     val vendor = new ScalityStsCredentialVendor(settings())
     intercept[DeltaSharingIllegalArgumentException] {
-      vendor.assumeRoleRequest("share_b", "s1", "t3", new URI("s3a://bucket-a/data/t3"), 3600)
+      vendor.assumeRoleRequest(ct("share_b", "s1", "t3"), new URI("s3a://bucket-a/data/t3"), 3600)
     }
     intercept[DeltaSharingIllegalArgumentException] {
-      vendor.assumeRoleRequest("share_a", "s1", "t1", new URI("abfss://c@a.dfs/x"), 3600)
+      vendor.assumeRoleRequest(ct("share_a", "s1", "t1"), new URI("abfss://c@a.dfs/x"), 3600)
     }
   }
 
   test("the STS client calls the configured endpoint and signs for the configured region") {
     val vendor = new ScalityStsCredentialVendor(settings())
-    val result = vendor.vend("share_a", "s1", "t2", new URI("s3a://bucket-a/data/t2"), 7200)
+    val result = vendor.vend(ct("share_d", "s1", "ti"), new URI("s3a://bucket-a/data/ti"), 7200)
     assert(sts.calls.size == 1)
     val call = sts.calls.head
     assert(call.params("Action") == "AssumeRole")
@@ -229,7 +269,7 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     assert(call.authorization.contains("/test-region-1/sts/aws4_request"))
     assert(call.authorization.contains("Credential=TESTKEY/"))
     val creds = result.credentials
-    assert(creds.location == "s3a://bucket-a/data/t2")
+    assert(creds.location == "s3a://bucket-a/data/ti")
     assert(creds.awsTempCredentials.accessKeyId == "FAKEACCESSKEY")
     assert(creds.awsTempCredentials.sessionToken == "fake-token")
     assert(creds.expirationTime == 1893456000000L) // 2030-01-01T00:00:00Z from STS
@@ -239,9 +279,11 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
 
   test("accessModes only for a history-shared table with a role") {
     val s = settings()
-    assert(s.accessModesFor("share_a", "s1", table("t1")).contains(Seq("url", "dir")))
-    assert(s.accessModesFor("share_b", "s1", table("t3")).isEmpty)
-    assert(s.accessModesFor("share_a", "s1", table("t1", historyShared = false)).isEmpty)
+    assert(s.accessModesFor(ct("share_a", "s1", "t1")).contains(Seq("url", "dir")))
+    assert(s.accessModesFor(ct("share_b", "s1", "t3")).isEmpty)
+    val noHistory = settings(ScalitySts.RolePrefix + "share_c" -> "arn:c")
+    assert(noHistory.roleFor(ct("share_c", "s1", "t4")).isDefined)
+    assert(noHistory.accessModesFor(ct("share_c", "s1", "t4")).isEmpty)
   }
 
   test("metadata lines carry location and accessModes only when advertised") {
