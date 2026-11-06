@@ -61,6 +61,12 @@
 > if missed), the deployment profiles, the TLS requirements for a Databricks Serverless
 > recipient, the Iceberg-via-Apache-XTable recipe, and **what is verified versus asserted**.
 >
+> **Temporary credentials instead of pre-signed URLs** — optional: with an STS endpoint
+> and one role per share in `core-site.xml`, the server advertises `accessModes`
+> `["url","dir"]` and vends `AssumeRole` credentials from the RING or ARTESCA STS. Off by
+> default; unit-tested only. Settings, RING STS limits and the live-test procedure:
+> [`docs/scality/temporary-credentials.md`](docs/scality/temporary-credentials.md).
+>
 > **What it does not yet do as a component inside RING or ARTESCA** — TLS provisioning,
 > least-privilege S3 credentials, product packaging, product documentation and more — is
 > listed in [`docs/scality/README.md`](docs/scality/README.md#what-this-release-line-does-not-yet-do).

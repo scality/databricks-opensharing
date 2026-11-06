@@ -96,6 +96,16 @@ Keep the fork thin. These are ours and everything else should stay identical to 
   `JsonLayout` (every log line one JSON object). Wired into `DeltaSharingService.start`
   by a few marked lines; the rest of the upstream file is untouched, so a rebase
   conflicts only there.
+- **`scality/ScalitySts.scala`** — optional temporary credentials from a RING or ARTESCA
+  STS (`delta.sharing.scality.sts.*` in `core-site.xml`): `AssumeRole` on one role per
+  share, `DurationSeconds` clamped to 3600, never `PolicyArns` (RING rejects it with 400;
+  it ignores an inline `Policy`, so the role is the only scope). It adds `location` and
+  `accessModes` to the list-tables and metadata responses, so it touches
+  `DeltaSharingService` (marked lines), two optional fields on `Metadata` /
+  `DeltaResponseMetadata` in `model.scala`, and fields 100-101 on `Table` in
+  `protocol.proto`. ⚠ With no `delta.sharing.scality.sts.endpoint` every one of those is
+  inert and the responses are upstream's — keep it that way on a rebase.
+  [`docs/scality/temporary-credentials.md`](docs/scality/temporary-credentials.md).
 - **The logging backend in `build.sbt`** — slf4j bound to reload4j only, with
   `log4j:log4j`, `slf4j-log4j12` and `slf4j-simple` excluded, and
   `server/src/universal/conf/log4j.properties` selecting `JsonLayout`. ⚠ Upstream ships

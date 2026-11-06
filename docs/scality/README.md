@@ -32,6 +32,7 @@ so.
 | Access is auditable | **Tested** — the server writes one JSON audit event per protocol request, refusals included (locally, on the image built from this branch, and in `setup/ci/integration.sh`); the reverse proxy in front of it records the same on ARTESCA 4.3. The object fetches reach only the S3 endpoint — see "Where the audit trail is" below |
 | The **reference client** reads the share end to end | **Tested** — the Linux Foundation `delta-sharing` client v1.4.2, against Scality RING and ARTESCA: profile → REST → presigned URL → Parquet → DataFrame |
 | End-to-end `SELECT` from a Databricks Serverless warehouse | **Not done** |
+| Temporary credentials from the RING or ARTESCA STS, one role per share ([`temporary-credentials.md`](temporary-credentials.md)) | **Unit-tested only** — against an in-process fake STS; not run against a Scality STS or a Databricks recipient |
 
 The signature check is the one not to skip. Every other check can pass while the bucket is
 simply world-readable, in which case the presigned URL proves nothing — so the suite
