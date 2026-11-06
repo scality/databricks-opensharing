@@ -10,7 +10,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-12T00:00:00Z"
+exclude-newer = "2026-10-21T00:00:00Z"
 
 [[package]]
 name = "adlfs"
@@ -329,11 +329,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.2.25"
+version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz", hash = "sha256:e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7", size = 155029, upload-time = "2026-02-25T02:54:17.342Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/bd/1436c50cc46699de0230fbaacc1d1de7bfec413176099949e9d5112e88f2/certifi-2026.10.19.tar.gz", hash = "sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae", size = 137598, upload-time = "2026-10-20T02:24:16.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/3c/c17fb3ca2d9c3acff52e30b309f538586f9f5b9c9cf454f3845fc9af4881/certifi-2026.2.25-py3-none-any.whl", hash = "sha256:027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa", size = 153684, upload-time = "2026-02-25T02:54:15.766Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl", hash = "sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b", size = 136464, upload-time = "2026-10-20T02:24:15.072Z" },
 ]
 
 [[package]]
@@ -615,22 +615,15 @@ wheels = [
 
 [[package]]
 name = "delta-kernel-rust-sharing-wrapper"
-version = "0.3.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ca/78/020111f3a5b60fa9265d5f5ed44e632e376f256de8f6da70fdcd9238f693/delta_kernel_rust_sharing_wrapper-0.3.1.tar.gz", hash = "sha256:d7cc3160f9d58de4419b27339bcc9bf8ef84f1a91383aa66322b6f20f3f1ca9f", size = 21775, upload-time = "2025-12-05T02:16:21.149Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/56/aeebc475c00f5ca7f7165e869be1d8139df09857745b82e50a0551b93836/delta_kernel_rust_sharing_wrapper-0.3.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f3c8851904e0b8942d563f6b110e3a10930209ac77a17dc12e2761798a5df36f", size = 9367497, upload-time = "2025-12-05T02:16:29.363Z" },
-    { url = "https://files.pythonhosted.org/packages/17/d4/d8f7f01855d992c426e6914135a4ded32849d3f21acd927ef5a8303dc96b/delta_kernel_rust_sharing_wrapper-0.3.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:cc7e018ff750748ae4c4d243c1570fb9e237f41deb0f56f237c039603c464698", size = 8888955, upload-time = "2025-12-05T02:16:31.271Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/1a/7c5dd6b1ff8514bfd5a20e44c61f854d5176b7d3c328fc5c5c8fea8278ef/delta_kernel_rust_sharing_wrapper-0.3.1-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:0e310547b5f0363e03654a19e35d44584a70fb9b8f68862e7171dbd09b36655a", size = 10061258, upload-time = "2025-12-05T02:16:33.741Z" },
-    { url = "https://files.pythonhosted.org/packages/bd/b7/40f78f841c77d7765f60955eec66953b14fbc84ca7dbbf338698bbf0c4e9/delta_kernel_rust_sharing_wrapper-0.3.1-cp38-abi3-manylinux_2_39_x86_64.whl", hash = "sha256:baa3e3cf33f2c648c07d58a2860bb7740254ed3148ee3d42a676b866b7cdc231", size = 10072123, upload-time = "2025-12-05T02:16:36.056Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/aa/2c110179240c27035180753e16e261239e54eaffa2b09b84cc9b7d709eb6/delta_kernel_rust_sharing_wrapper-0.3.1-cp38-abi3-win_amd64.whl", hash = "sha256:5326f3d05e7209f8773e55ec480f34c0485ec7af4ae3feb73339cdd583fd27ec", size = 8745790, upload-time = "2025-12-05T02:16:37.85Z" },
-]
+version = "0.3.4"
+source = { directory = "delta-kernel-rust-sharing-wrapper" }
 
 [[package]]
 name = "delta-sharing"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "certifi" },
     { name = "delta-kernel-rust-sharing-wrapper" },
     { name = "fsspec" },
     { name = "jwcrypto" },
@@ -674,7 +667,8 @@ requires-dist = [
     { name = "adlfs", marker = "extra == 'abfs'" },
     { name = "adlfs", marker = "extra == 'adl'" },
     { name = "aiohttp", specifier = ">=3.0.0,<=3.13.4" },
-    { name = "delta-kernel-rust-sharing-wrapper", specifier = ">=0.3.1,<1.0" },
+    { name = "certifi", specifier = ">=2026.10.19" },
+    { name = "delta-kernel-rust-sharing-wrapper", directory = "delta-kernel-rust-sharing-wrapper" },
     { name = "fsspec", specifier = ">=0.7.4,<=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'gcs'" },
     { name = "gcsfs", marker = "extra == 'gs'" },

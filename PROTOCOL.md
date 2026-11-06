@@ -16,7 +16,9 @@
     - [Read Data from a Table](#read-data-from-a-table)
       - [Request Body](#request-body)
     - [Read Change Data Feed from a Table](#read-change-data-feed-from-a-table)
+    - [Get Query Info](#get-query-info)
   - [Delta Sharing Capabilities Header](#delta-sharing-capabilities-header)
+  - [File ID Hash Header](#file-id-hash-header)
   - [API Response Actions in Parquet Format](#api-response-actions-in-parquet-format)
     - [JSON Wrapper Object In Each Line](#json-wrapper-object-in-each-line)
     - [Protocol](#protocol)
@@ -1590,6 +1592,17 @@ Optional: `delta-sharing-capabilities: responseformat=delta;readerfeatures=delet
 **{table}**: The table name to query. It's case-insensitive.
 </td>
 </tr>
+<tr>
+<td>Query Parameters</td>
+<td>
+
+**{version}** (type: Long, optional): an optional version number. If set, will return the table metadata as of the specified version of the table. This is only supported on tables with history sharing enabled.
+
+**{timestamp}** (type: String, optional): an optional timestamp string in the [Timestamp Format](#timestamp-format). If set, will return the table metadata as of the table version corresponding to the specified timestamp. This is only supported on tables with history sharing enabled.
+
+`version` and `timestamp` are mutually exclusive; at most one of them may be provided in a single request. When neither is set, the server returns the metadata of the latest table version.
+</td>
+</tr>
 </table>
 
 <details open>
@@ -1850,6 +1863,10 @@ Optional: `Content-Type: application/json; charset=utf-8`
 
 Optional: `delta-sharing-capabilities: responseformat=delta;readerfeatures=deletionvectors`, see
 [Delta Sharing Capabilities Header](#delta-sharing-capabilities-header) for details.
+
+Optional: `delta-sharing-capabilities: asyncquery=true` to run the query asynchronously and receive a
+`queryId` to poll with [Get Query Info](#get-query-info), see
+[asyncQuery](#asyncquery) for details.
 
 </td>
 </tr>
@@ -2132,6 +2149,12 @@ The request body should be a JSON string containing the following optional field
 - **endingVersion** (type: Long, optional): an optional version number, only used if startingVersion is set. If set, the server can use it as a hint to avoid returning data change files after `endingVersion`. This is not enforcement. Hence, when sending the `endingVersion` parameter, the client should still handle the case that it may receive files after `endingVersion`.
   - The combination of `statingVersion` and `endingVersion` can be used as query window for delta sharing streaming rpcs.
 
+- **includeHistoricalProtocol** (type: Boolean, optional): only used when `startingVersion` is set. If true, the server inlines historical [Protocol](#protocol-in-delta-format) actions seen in the delta log (for versions strictly after `startingVersion`) so the streaming client can check whether the table is still read compatible (e.g. when a new reader feature is enabled mid-stream). This only affects responses with `responseformat=delta`; for `responseformat=parquet` responses the flag is ignored and no additional Protocol actions are emitted.
+
+- **idempotencyKey** (type: String, optional): only used for asynchronous queries (when the client sets `asyncquery=true` in the [Delta Sharing Capabilities Header](#asyncquery)). It is a client-generated key that the server uses to deduplicate retried query submissions, so that retrying a submission maps to the same `queryId` instead of starting a duplicate query. See [Get Query Info](#get-query-info).
+  - The key only needs to be unique for the requesting client's submissions to a given table (share/schema/table); it is not required to be globally unique across all clients, and does not need to be a UUID. A client that generates a UUID (or any other string with sufficiently low collision probability) for each logical query and reuses the same value across retries of that query satisfies this requirement.
+  - The server is only expected to deduplicate submissions bearing the same idempotency key that also target the same table and carry the same request parameters (predicates, version, etc.); reusing a key across different tables or with different parameters is undefined behavior and the server may either reject the request or start a new query.
+
 When `predicateHints` and `limitHint` are both present, the server should apply `predicateHints` first then `limitHint`. As these two parameters are hints rather than enforcement, the client must always apply `predicateHints` and `limitHint` on the response returned by the server if it wishes to filter and limit the returned data. An empty JSON object (`{}`) should be provided when these two parameters are missing.
 
 #### Example for snapshot query
@@ -2287,6 +2310,45 @@ delta-table-version: 1
 }
 ```
 
+#### Example for asynchronous query
+
+When the client sets `asyncquery=true` in the [Delta Sharing Capabilities Header](#asyncquery) and the
+server supports it, the server does not block until the response is computed. Instead it returns a single
+JSON line containing a [QueryStatus](#get-query-info) object with the `queryId`, and echoes
+`asyncquery=true` in the response header. The client then polls [Get Query Info](#get-query-info)
+with the `queryId`.
+
+`POST {prefix}/shares/share_name/schemas/schema_name/tables/table_name/query`
+
+```
+delta-sharing-capabilities: asyncquery=true
+```
+
+```json
+{
+  "predicateHints": [
+    "date >= '2021-01-01'"
+  ],
+  "limitHint": 1000,
+  "idempotencyKey": "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+}
+```
+
+```
+HTTP/2 200 
+content-type: application/x-ndjson; charset=utf-8
+delta-sharing-capabilities: asyncquery=true
+```
+
+```json
+{
+  "queryStatus": {
+    "queryId": "6d3a1f1e-9b2c-4c8a-8e1f-2f5b7a9c0d11",
+    "status": "pending"
+  }
+}
+```
+
 ### Read Change Data Feed from a Table
 This is the API for clients to read change data feed from a table.
 
@@ -2348,7 +2410,8 @@ Optional: `delta-sharing-capabilities: responseformat=delta;readerfeatures=delet
  **startingTimestamp** (type: String, optional): The starting timestamp of the query, a string in the [Timestamp Format](#timestamp-format), which will be converted to a version created greater or equal to this timestamp. <br>
  **endingVersion** (type: Long, optional): The ending version of the query, inclusive. <br>
  **endingTimestamp** (type: String, optional): The ending timestamp of the query, a string in the [Timestamp Format](#timestamp-format), which will be converted to a version created earlier than or at the timestamp. <br>
- **includeHistoricalMetadata** (type: Boolean, optional): If set to true, return the historical metadata if seen in the delta log. This is for the streaming client to check if the table schema is still read compatible.</td>
+ **includeHistoricalMetadata** (type: Boolean, optional): If set to true, return the historical metadata if seen in the delta log. This is for the streaming client to check if the table schema is still read compatible. <br>
+ **includeHistoricalProtocol** (type: Boolean, optional): If set to true, return historical [Protocol](#protocol-in-delta-format) actions seen in the delta log so the streaming client can check whether the table is still read compatible (e.g. when a new reader feature is enabled mid-stream). This only affects responses with `responseformat=delta`; for `responseformat=parquet` responses the flag is ignored and no additional Protocol actions are emitted.</td>
 </tr>
 </table>
 
@@ -2390,6 +2453,7 @@ When `responseformat=delta`, a sequence of JSON strings delimited by newline. Ea
 - The second line is [a JSON wrapper object](#json-wrapper-object-in-each-line-in-delta) containing the delta [Metadata](#metadata-in-delta-format) object.
 - The rest of the lines are [JSON wrapper objects](#json-wrapper-object-in-each-line) for [Files](#file-in-delta-format) of the change data feed.
   - Historical [Metadata](#metadata) will be returned if includeHistoricalMetadata is set to true.
+  - Historical [Protocol](#protocol-in-delta-format) actions will be returned if includeHistoricalProtocol is set to true. This is only supported for the delta response format.
   - The ordering of the lines doesn't matter.
 
 </td>
@@ -2617,6 +2681,323 @@ content-type: application/x-ndjson; charset=utf-8
     "size": 573,
     "timestamp": 1652142000000,
     "version": 2
+  }
+}
+```
+
+### Get Query Info
+
+This is the API for clients to poll the status of an asynchronous [Query Table](#read-data-from-a-table)
+request and, once the query has succeeded, retrieve its response. It is used together with the
+[asyncQuery](#asyncquery) capability: when a client submits a query with `asyncquery=true`, the server
+returns a `queryId`, and the client calls this API with that `queryId` until the query completes.
+
+<table>
+<tr>
+<th>HTTP Request</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Method</td>
+<td>
+
+`POST`
+
+</td>
+</tr>
+<tr>
+<td>Headers</td>
+<td>
+
+`Authorization: Bearer {token}`
+
+Optional: `Content-Type: application/json; charset=utf-8`
+
+Optional: `delta-sharing-capabilities: responseformat=delta;readerfeatures=deletionvectors`, see
+[Delta Sharing Capabilities Header](#delta-sharing-capabilities-header) for details.
+
+</td>
+</tr>
+<tr>
+<td>URL</td>
+<td>
+
+`{prefix}/shares/{share}/schemas/{schema}/tables/{table}/queries/{queryId}`
+
+</td>
+</tr>
+<tr>
+<td>URL Parameters</td>
+<td>
+
+**{share}**: The share name to query. It's case-insensitive.<br>
+**{schema}**: The schema name to query. It's case-insensitive.<br>
+**{table}**: The table name to query. It's case-insensitive.<br>
+**{queryId}**: The identifier returned in the [QueryStatus](#get-query-info) object of the asynchronous
+[Query Table](#read-data-from-a-table) response. `queryId` is an opaque, server-generated string; it is
+not required to be a UUID, and clients must not assume any particular format when handling it.
+</td>
+</tr>
+<tr>
+<td>Body (an example)</td>
+<td>
+
+```json
+{
+  "maxFiles": 1000,
+  "pageToken": "string"
+}
+```
+
+- **maxFiles** (type: Int32, optional): the maximum number of files to return in one page. This is a hint;
+  the server may return fewer. When more files are available, the response contains a `nextPageToken`.
+- **pageToken** (type: String, optional): the page token used to retrieve the subsequent page of a
+  succeeded query's response.
+</td>
+</tr>
+</table>
+
+<details open>
+<summary><b>200: The query result was successfully returned.</b></summary>
+
+<table>
+<tr>
+<th>HTTP Response</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Headers</td>
+<td>
+
+`Content-Type: application/x-ndjson; charset=utf-8`
+
+`Delta-Table-Version: {version}` (only present once the query has succeeded)
+
+</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>
+
+The response is a sequence of JSON strings delimited by newline.
+
+While the query is still being computed, the response is a single line containing a `queryStatus` object:
+
+```json
+{
+  "queryStatus": {
+    "queryId": "6d3a1f1e-9b2c-4c8a-8e1f-2f5b7a9c0d11",
+    "status": "pending"
+  }
+}
+```
+
+The `status` field takes one of the following values:
+- **pending**: the query has been accepted and is being computed; results are not yet available.
+- **failed**: the query failed. The `queryStatus` object also carries an error message.
+
+The client should keep polling while the status is `pending`.
+
+Once the query has succeeded, the response no longer contains a `queryStatus` line at all. Instead the
+response body is exactly the same as a synchronous [Query Table](#read-data-from-a-table) response: the
+first line is the [Protocol](#protocol) (or [Protocol in Delta Format](#protocol-in-delta-format)), the
+second line is the [Metadata](#metadata) (or [Metadata in Delta Format](#metadata-in-delta-format)), and
+the remaining lines are the [files](#file) (or [files in delta format](#file-in-delta-format)) / [data
+change files](#data-change-files). Pagination behaves the same as [Query Table](#read-data-from-a-table):
+when more files are available, an [EndStreamAction](#endstreamaction) containing a `nextPageToken` is
+returned, which the client passes back in `pageToken` to fetch the next page.
+
+When the status is `failed`, the response is a single `queryStatus` line describing the failure.
+
+</td>
+</tr>
+</table>
+</details>
+<details>
+<summary><b>400: The request is malformed.</b></summary>
+
+<table>
+<tr>
+<th>HTTP Response</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Header</td>
+<td>
+
+`Content-Type: application/json`
+
+</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>
+
+```json
+{
+  "errorCode": "string",
+  "message": "string"
+}
+```
+
+</td>
+</tr>
+</table>
+</details>
+<details>
+<summary><b>401: The request is unauthenticated. The bearer token is missing or incorrect.</b></summary>
+
+<table>
+<tr>
+<th>HTTP Response</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Header</td>
+<td>
+
+`Content-Type: application/json`
+
+</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>
+
+```json
+{
+  "errorCode": "string",
+  "message": "string"
+}
+```
+
+</td>
+</tr>
+</table>
+</details>
+<details>
+<summary><b>404: The requested resource does not exist. The queryId is unknown or has expired.</b></summary>
+
+<table>
+<tr>
+<th>HTTP Response</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Header</td>
+<td>
+
+`Content-Type: application/json`
+
+</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>
+
+```json
+{
+  "errorCode": "string",
+  "message": "string"
+}
+```
+
+</td>
+</tr>
+</table>
+</details>
+<details>
+<summary><b>500: The request is not handled correctly due to a server error.</b></summary>
+<table>
+<tr>
+<th>HTTP Response</th>
+<th>Value</th>
+</tr>
+<tr>
+<td>Header</td>
+<td>
+
+`Content-Type: application/json`
+
+</td>
+</tr>
+<tr>
+<td>Body</td>
+<td>
+
+```json
+{
+  "errorCode": "string",
+  "message": "string"
+}
+```
+
+</td>
+</tr>
+</table>
+</details>
+
+#### Example
+
+`POST {prefix}/shares/share_name/schemas/schema_name/tables/table_name/queries/6d3a1f1e-9b2c-4c8a-8e1f-2f5b7a9c0d11`
+
+```json
+{
+  "maxFiles": 1000
+}
+```
+
+While the query is still being computed:
+
+```
+HTTP/2 200 
+content-type: application/x-ndjson; charset=utf-8
+```
+
+```json
+{
+  "queryStatus": {
+    "queryId": "6d3a1f1e-9b2c-4c8a-8e1f-2f5b7a9c0d11",
+    "status": "pending"
+  }
+}
+```
+
+After the query has succeeded:
+
+```
+HTTP/2 200 
+content-type: application/x-ndjson; charset=utf-8
+delta-table-version: 123
+```
+
+```json
+{
+  "protocol": {
+    "minReaderVersion": 1
+  }
+}
+{
+  "metaData": {
+    "id": "f8d5c169-3d01-4ca3-ad9e-7dc3355aedb2",
+    "format": {
+      "provider": "parquet"
+    },
+    "schemaString": "{\"type\":\"struct\",\"fields\":[{\"name\":\"eventTime\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{}},{\"name\":\"date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{}}]}",
+    "partitionColumns": [
+      "date"
+    ]
+  }
+}
+{
+  "file": {
+    "url": "https://<s3-bucket-name>.s3.us-west-2.amazonaws.com/delta-exchange-test/table2/date%3D2021-04-28/part-00000-8b0086f2-7b27-4935-ac5a-8ed6215a6640.c000.snappy.parquet?...",
+    "id": "8b0086f2-7b27-4935-ac5a-8ed6215a6640",
+    "partitionValues": {
+      "date": "2021-04-28"
+    },
+    "size": 573,
+    "stats": "{\"numRecords\":1,\"minValues\":{\"eventTime\":\"2021-04-28T23:33:57.955Z\"},\"maxValues\":{\"eventTime\":\"2021-04-28T23:33:57.955Z\"},\"nullCount\":{\"eventTime\":0}}"
   }
 }
 ```
@@ -3041,6 +3422,85 @@ The server can:
 1) For snapshot queries, the server may send back an EndStreamAction containing the refreshToken, used to refresh the presigned url, see more details [here](https://github.com/delta-io/delta-sharing/issues/383).
 2) For paginated requests, the server may send back and EndStreamAction containing the nextPageToken
 
+### asyncQuery
+The key is `asyncquery` and the value is `true` or `false`, i.e. `asyncquery=true`.
+
+`asyncquery` indicates that the client is able to run a [Query Table](#read-data-from-a-table) request
+asynchronously. Instead of blocking until the server has computed the full response, the client submits
+the query, receives a `queryId`, and then polls the [Get Query Info](#get-query-info) API with that
+`queryId` until the query completes and the file actions are returned. This is useful for long running
+queries, such as those on tables with a large number of data files, where a single synchronous response
+could exceed request timeouts.
+
+This capability can be used in the request for [Query Table](#read-data-from-a-table). It is only
+honored by a server that also advertises `asyncquery` in the `delta-sharing-capabilities` response
+header; a server that does not recognize the capability ignores it and serves the query synchronously.
+
+**Compatibility**
+
+<table>
+<tr>
+<th>Client/Server</th>
+<th>Server that doesn't recognize the capability</th>
+<th>Server that recognizes the capability</th>
+</tr>
+<tr>
+<th>Client that doesn't set asyncquery=true</th>
+<td colspan="2">The query is served synchronously. The server computes the response and returns the
+[Protocol](#protocol), [Metadata](#metadata), and file actions in a single response, and does not return a
+`queryId`.</td>
+</tr>
+<tr>
+<th>Client that sets asyncquery=true</th>
+<td>The capability is ignored by the server, and the query is served synchronously in a single response.
+The client must be prepared to handle a synchronous response (i.e. no `queryId` line).
+</td>
+<td>
+The server sets `asyncquery=true` in the response header and serves the query asynchronously. The server
+responds with a single JSON line containing a [QueryStatus](#get-query-info) object that carries the
+`queryId`. The client then polls the [Get Query Info](#get-query-info) API with that `queryId` to
+retrieve the query status and, once the query has succeeded, the [Protocol](#protocol), [Metadata](#metadata),
+and file actions.
+</td>
+</tr>
+</table>
+
+When submitting an asynchronous query, the client should include an idempotency key
+(`idempotencyKey`) in the [Query Table](#read-data-from-a-table) request body. The server uses this key to
+deduplicate retried submissions so that a client that retries a submission (for example after a network
+error) is mapped to the same `queryId` rather than starting a duplicate query.
+
+
+## File ID Hash Header
+
+The `fileidhash` HTTP request header allows the client to select how file `id` values are derived in the
+response. Each supported value names a **scheme** aligned with the `responseFormat` (`parquet` or `delta`). For a given scheme, the server must derive `id` deterministically from the file so the same logical file always receives the same `id` across requests; the exact encoding is implementation-defined but must be consistent for that scheme on a given server.
+
+This is a standalone HTTP header, not part of `delta-sharing-capabilities`.
+
+This header can be used in the request for [Query Table](#read-data-from-a-table) and
+[Query Table Changes](#read-change-data-feed-from-a-table).
+
+### Supported Values
+
+Value | Description
+-|-
+`parquet` | File `id` values use the Parquet-aligned scheme: a stable, deterministic encoding of the file (encoding details are implementation-defined).
+`delta` | File `id` values use the Delta-aligned scheme: a stable, deterministic encoding of the file (encoding details are implementation-defined).
+
+The value is case-insensitive. The server must return HTTP 400 if an unsupported value is provided.
+
+### Response Header
+
+When the client sends a valid `fileidhash` header, the server must echo the same header and value
+(normalized to lowercase) in the response. 
+
+### Client Verification
+
+When a client sends the `fileidhash` header, it should verify that the server echoes the same value in
+the response. If the response header is missing or has a different value, the client should treat
+this as an error (the server may not support the feature or may have used a different file ID scheme).
+
 
 ## API Response Actions
 This section talks about the common actions in the response.  
@@ -3156,7 +3616,7 @@ Example (for illustration purposes; each JSON object must be a single line in th
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
 url | String | An https url that a client can use to read the file directly. The same file in different responses may have different urls. | Required
-id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Required
+id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. The file ID scheme (`parquet` or `delta`, see [`fileidhash`](#file-id-hash-header)) can be selected via that request header. | Required
 partitionValues | Map<String, String> | A map from partition column to value for this file. See [Partition Value Serialization](#partition-value-serialization) for how to parse the partition values. When the table doesn’t have partition columns, this will be an **empty** map. | Required
 size | Long | The size of this file in bytes. | Required
 stats | String | Contains statistics (e.g., count, min/max values for columns) about the data in this file. This field may be missing. A file may or may not have stats. This is a serialized JSON string which can be deserialized to a [Statistics Struct](#per-file-statistics). A client can decide whether to use stats or drop it. | Optional
@@ -3187,7 +3647,7 @@ Example (for illustration purposes; each JSON object must be a single line in th
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
 url | String | An https url that a client can use to read the file directly. The same file in different responses may have different urls. | Required
-id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Required
+id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. The file ID scheme (`parquet` or `delta`, see [`fileidhash`](#file-id-hash-header)) can be selected via that request header. | Required
 partitionValues | Map<String, String> | A map from partition column to value for this file. See [Partition Value Serialization](#partition-value-serialization) for how to parse the partition values. When the table doesn’t have partition columns, this will be an **empty** map. | Required
 size | Long | The size of this file in bytes. | Required
 timestamp | Long | The timestamp of the file in milliseconds from epoch. | Required
@@ -3218,7 +3678,7 @@ Example (for illustration purposes; each JSON object must be a single line in th
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
 url | String | An https url that a client can use to read the file directly. The same file in different responses may have different urls. | Required
-id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Required
+id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. The file ID scheme (`parquet` or `delta`, see [`fileidhash`](#file-id-hash-header)) can be selected via that request header. | Required
 partitionValues | Map<String, String> | A map from partition column to value for this file. See [Partition Value Serialization](#partition-value-serialization) for how to parse the partition values. When the table doesn’t have partition columns, this will be an **empty** map. | Required
 size | Long | The size of this file in bytes. | Required
 timestamp | Long | The timestamp of the file in milliseconds from epoch. | Required
@@ -3247,7 +3707,7 @@ Example (for illustration purposes; each JSON object must be a single line in th
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
 url | String | An https url that a client can use to read the file directly. The same file in different responses may have different urls. | Required
-id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Required
+id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. The file ID scheme (`parquet` or `delta`, see [`fileidhash`](#file-id-hash-header)) can be selected via that request header. | Required
 partitionValues | Map<String, String> | A map from partition column to value for this file. See [Partition Value Serialization](#partition-value-serialization) for how to parse the partition values. When the table doesn’t have partition columns, this will be an **empty** map. | Required
 size | Long | The size of this file in bytes. | Required
 timestamp | Long | The timestamp of the file in milliseconds from epoch. | Required
@@ -3578,15 +4038,19 @@ A wrapper of a [delta protocol](https://github.com/delta-io/delta/blob/master/PR
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
 deltaProtocol | Delta Protocol | Need to be parsed by a delta library as a delta protocol. | Required
+version | Long | The table version this Protocol corresponds to. Populated only on streaming [Read Data from a Table](#read-data-from-a-table) and [Read Change Data Feed from a Table](#read-change-data-feed-from-a-table) responses when [includeHistoricalProtocol](#read-change-data-feed-from-a-table) is set to true, identifying the delta log version of each [Protocol](#protocol-in-delta-format) action (both the head Protocol and any historical Protocol actions inlined into the response). Omitted otherwise to keep the delta-format wire shape backwards compatible for clients that do not opt in. | Optional
 
 Example (for illustration purposes; each JSON object must be a single line in the response):
 
 ```json
 {
   "protocol": {
+    "version": 5,
     "deltaProtocol": {
       "minReaderVersion": 3,
-      "minWriterVersion": 7
+      "minWriterVersion": 7,
+      "readerFeatures": ["columnMapping"],
+      "writerFeatures": ["columnMapping", "identityColumns"]
     }
   }
 }
@@ -3643,7 +4107,7 @@ or [Add CDC File](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-
 
 Field Name | Data Type | Description | Optional/Required
 -|-|-|-
-id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Required
+id | String | A unique string for the file in a table. The same file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. The file ID scheme (`parquet` or `delta`, see [`fileidhash`](#file-id-hash-header)) can be selected via that request header. | Required
 deletionVectorFileId | String | A unique string for the deletion vector file in a table. The same deletion vector file is guaranteed to have the same id across multiple requests. A client may cache the file content and use this id as a key to decide whether to use the cached file content. | Optional
 version | Long | The table version of the file, returned when querying a table data with a version or timestamp parameter. | Optional
 timestamp | Long | The unix timestamp corresponding to the table version of the file, in milliseconds, returned when querying a table data with a version or timestamp parameter. | Optional
