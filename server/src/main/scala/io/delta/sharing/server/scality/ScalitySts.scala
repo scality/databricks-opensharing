@@ -17,6 +17,7 @@
 package io.delta.sharing.server.scality
 
 import java.net.URI
+import java.util.Locale
 
 import com.amazonaws.auth.{AWSCredentialsProvider, DefaultAWSCredentialsProviderChain}
 import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration
@@ -62,9 +63,14 @@ case class ScalityStsSettings(
   /**
    * The role ARN for a table: the most specific key wins:
    * `role.<share>.<schema>.<table>`, then `role.<share>.<schema>`, then `role.<share>`.
+   * The server resolves names case-insensitively, so `roles` holds lower-cased keys
+   * (`ScalitySts.fromHadoop`) and the lookup lower-cases its inputs: a request spelled
+   * `Share/Schema/Table` must find the table's own role, never fall back to the share's.
    */
-  def roleFor(share: String, schema: String, table: String): Option[String] =
-    Seq(s"$share.$schema.$table", s"$share.$schema", share).flatMap(roles.get).headOption
+  def roleFor(share: String, schema: String, table: String): Option[String] = {
+    val (sh, sc, t) = (ScalitySts.norm(share), ScalitySts.norm(schema), ScalitySts.norm(table))
+    Seq(s"$sh.$sc.$t", s"$sh.$sc", sh).flatMap(roles.get).headOption
+  }
 
   /** The access modes to advertise for a table, or None to advertise nothing (upstream). */
   def accessModesFor(share: String, schema: String, tableConfig: TableConfig): Option[Seq[String]] =
@@ -117,10 +123,26 @@ object ScalitySts {
       Some(ScalityStsSettings(
         endpoint = endpoint,
         region = region,
-        roles = roles,
+        roles = normaliseRoles(roles),
         sendSessionPolicy = conf.getBoolean(SessionPolicyKey, false),
         credentialsProvider = credentialsProvider))
     }
+  }
+
+  def norm(name: String): String = name.toLowerCase(Locale.ROOT)
+
+  /**
+   * Role keys lower-cased. Two keys that differ only in case would make the role depend
+   * on how a request spells the name, so they refuse to load.
+   */
+  def normaliseRoles(raw: Map[String, String]): Map[String, String] = {
+    val grouped = raw.toSeq.groupBy { case (k, _) => norm(k) }
+    val clashes = grouped.filter(_._2.size > 1).values.map(_.map(_._1).sorted.mkString(", "))
+    if (clashes.nonEmpty) {
+      throw new IllegalArgumentException(
+        s"$RolePrefix keys differ only in case: ${clashes.toSeq.sorted.mkString("; ")}")
+    }
+    grouped.map { case (k, kvs) => k -> kvs.head._2 }
   }
 
   /** The DurationSeconds sent: the server's validity, clamped to [1, 3600]. */

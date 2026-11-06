@@ -103,8 +103,10 @@ Example — two shares, one role each:
 </property>
 ```
 
-A share, schema or table name containing a dot makes these keys ambiguous; avoid dots in
-names you map.
+Role keys match names case-insensitively, as the server resolves shares, schemas and
+tables: a request for `Sales/Q1/Orders` finds `role.sales.q1.orders`, never a broader role.
+Two role keys that differ only in case stop the server at startup. A share, schema or table
+name containing a dot makes these keys ambiguous; avoid dots in names you map.
 
 ## Manual live test procedure
 

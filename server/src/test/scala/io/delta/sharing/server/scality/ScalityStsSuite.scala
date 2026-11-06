@@ -157,6 +157,31 @@ class ScalityStsSuite extends FunSuite with BeforeAndAfterAll with BeforeAndAfte
     assert(withSchema.roleFor("share_a", "s1", "t2").contains(tableRole))
   }
 
+  test("role lookup ignores case: a mixed-case request gets the table role, not the share's") {
+    val s = settings()
+    assert(s.roleFor("SHARE_A", "S1", "T2").contains(tableRole))
+    assert(s.roleFor("Share_A", "s1", "t2").contains(tableRole))
+    assert(s.roleFor("Share_A", "S1", "T1").contains(shareRole))
+    val mixedKeys = settings(ScalitySts.RolePrefix + "Share_B.S1.T3" -> "arn:t3")
+    assert(mixedKeys.roleFor("share_b", "s1", "t3").contains("arn:t3"))
+  }
+
+  test("role keys that collide after lower-casing refuse to load") {
+    val e = intercept[IllegalArgumentException] {
+      settings(ScalitySts.RolePrefix + "SHARE_A.s1.t2" -> "arn:other")
+    }
+    assert(e.getMessage.contains("SHARE_A.s1.t2"))
+  }
+
+  test("configured service: a mixed-case credential request assumes the table role") {
+    val service = new DeltaSharingService(serverConfig(), Some(settings()))
+    service.generateTemporaryTableCredential(
+      HttpRequest.of(HttpMethod.POST, "/"), "SHARE_A", "S1", "T2",
+      AggregatedHttpRequest.of(HttpMethod.POST, "/")).aggregate().join()
+    assert(sts.calls.size == 1)
+    assert(sts.calls.head.params("RoleArn") == tableRole)
+  }
+
   test("duration is clamped to 3600 seconds") {
     assert(ScalitySts.durationSeconds(7200) == 3600)
     assert(ScalitySts.durationSeconds(3600) == 3600)
